@@ -96,7 +96,8 @@ export function CrossCenterFlyPanel({
         </defs>
         <rect width="1280" height="220" fill="url(#flowMapGlow)" />
 
-        <g transform="translate(0,-120) scale(1,0.85)">
+        {/* 全国坐标裁切到条带高度：对齐中国地图投影后的节点分布 */}
+        <g transform="translate(0,-150) scale(1,0.52)">
           {/* 网关 → 已分配区域：固定直连；其余区域仅弱参考 */}
           {FLY_MARKS.map((mark) => {
             const primary = assignedSet.has(mark.id)

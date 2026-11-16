@@ -241,6 +241,29 @@ button {
   animation: fp-flow-rev 1.05s linear infinite;
 }
 
+/* 非均匀传输：每条链路用 --fp-dur / --fp-delay 错开节奏 */
+.fp-flow-var {
+  stroke-dasharray: 6 18;
+  stroke-linecap: round;
+  animation: fp-flow var(--fp-dur, 1.8s) linear var(--fp-delay, 0s) infinite;
+}
+
+.fp-bead-var {
+  stroke-dasharray: 2.2 26;
+  stroke-linecap: round;
+  animation: fp-flow var(--fp-dur, 1.8s) linear var(--fp-delay, 0s) infinite;
+}
+
+.fp-flow-rev-var {
+  stroke-dasharray: 5 20;
+  stroke-linecap: round;
+  animation: fp-flow-rev var(--fp-dur, 1.6s) linear var(--fp-delay, 0s) infinite;
+}
+
+.fp-pulse-dot {
+  pointer-events: none;
+}
+
 @keyframes fp-flow {
   to {
     stroke-dashoffset: -220;
