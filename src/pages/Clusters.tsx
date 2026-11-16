@@ -11,10 +11,16 @@ function slotColor(state: string) {
   return 'bg-idle'
 }
 
-function nvlinkTone(status: string) {
+function statusTone(status: string) {
   if (status === 'healthy') return 'text-infer'
   if (status === 'degraded') return 'text-gang'
   return 'text-alert'
+}
+
+function statusLabel(status: string) {
+  if (status === 'healthy') return '健康'
+  if (status === 'degraded') return '降级'
+  return '离线'
 }
 
 const SLOT_LEGEND = [
@@ -61,7 +67,7 @@ export function Clusters() {
           <p className="mb-1 text-[12.5px] text-dim">资源</p>
           <h2 className="text-[28px] leading-none">节点</h2>
           <p className="mt-1.5 text-[13px] text-muted">
-            当前电站对应节点池 · NVIDIA H100 80GB NVLink · 单机 8 卡透视
+            当前节点池 · 4/8/16/32 槽 · 同卡满配或合理混卡（如 RTX5090+4060、H100+H200、昇腾 910B+910C）
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5 rounded-full bg-[rgba(61,49,79,0.06)] p-1">
@@ -175,7 +181,7 @@ export function Clusters() {
           <table className="w-full min-w-[1100px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-[rgba(248,248,248,0.92)] text-dim backdrop-blur">
               <tr>
-                {['主机名', 'IP', 'GPU 型号', '8卡槽位', 'NVLink', 'RDMA', '温度', '功耗', '操作'].map((h) => (
+                {['主机名', 'IP', 'GPU 型号', '卡槽位', '状态', 'RDMA', '温度', '功耗', '操作'].map((h) => (
                   <th key={h} className="border-b border-border px-3 py-2.5 font-medium">
                     {h}
                   </th>
@@ -185,6 +191,7 @@ export function Clusters() {
             <tbody>
               {servers.map((s) => {
                 const active = selectedId === s.id
+                const slotN = s.gpus.length
                 return (
                   <tr
                     key={s.id}
@@ -202,24 +209,38 @@ export function Clusters() {
                       </div>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-muted">{s.ip}</td>
-                    <td className="px-3 py-2.5 text-muted">{s.gpuModel}</td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex gap-0.5">
-                        {s.gpus.map((g) => (
-                          <div
-                            key={g.index}
-                            title={`GPU ${g.index}: ${g.state}`}
-                            className={`h-3 w-4 rounded-sm ${slotColor(g.state)}`}
-                          />
-                        ))}
+                    <td className="px-3 py-2.5 text-muted">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>{s.gpuModel}</span>
+                        {new Set(s.gpus.map((g) => g.cardModel)).size > 1 && (
+                          <span className="rounded-full border border-[rgba(47,99,184,0.28)] bg-[#eef3fb] px-1.5 py-0.5 text-[10px] font-medium text-infer">
+                            混卡
+                          </span>
+                        )}
                       </div>
                     </td>
-                    <td className={`px-3 py-2.5 font-medium ${nvlinkTone(s.nvlinkStatus)}`}>
-                      {s.nvlinkStatus}
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex max-w-[240px] flex-wrap gap-0.5">
+                          {s.gpus.map((g) => (
+                            <div
+                              key={g.index}
+                              title={`GPU ${g.index}: ${g.cardModel} · ${g.state}${g.modelName ? ` · ${g.modelName}` : ''}`}
+                              className={`h-3 w-3 rounded-sm sm:w-3.5 ${slotColor(g.state)}`}
+                            />
+                          ))}
+                        </div>
+                        <span className="font-mono text-[10px] text-dim">{slotN} 槽</span>
+                      </div>
+                    </td>
+                    <td className={`px-3 py-2.5 font-medium ${statusTone(s.nvlinkStatus)}`}>
+                      {statusLabel(s.nvlinkStatus)}
                     </td>
                     <td className="px-3 py-2.5 font-mono text-muted">{s.rdmaGbps} Gbps</td>
                     <td className="px-3 py-2.5 font-mono text-muted">{s.temperature}°C</td>
-                    <td className="px-3 py-2.5 font-mono text-muted">{s.powerW} W</td>
+                    <td className="px-3 py-2.5 font-mono text-muted" title={`GPU ${s.powerW - (s.chassisBaseW || 0)}W + 机箱 ${s.chassisBaseW || 0}W`}>
+                      {s.powerW >= 1000 ? `${(s.powerW / 1000).toFixed(1)} kW` : `${s.powerW} W`}
+                    </td>
                     <td className="px-3 py-2.5">
                       <button
                         type="button"
@@ -230,7 +251,7 @@ export function Clusters() {
                         }}
                         className="rounded-full border border-[rgba(47,99,184,0.28)] bg-[#eef3fb] px-2.5 py-1 text-[11px] font-medium text-infer hover:bg-[#e3ecfa]"
                       >
-                        单机 8 卡透视
+                        {slotN}卡透视
                       </button>
                     </td>
                   </tr>

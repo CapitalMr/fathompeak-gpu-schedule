@@ -75,19 +75,64 @@ export interface ChassisModel {
   }>
 }
 
-function boardMeta(gpuModel?: string) {
-  const text = (gpuModel ?? '').toLowerCase()
+function boardMeta(gpuModel?: string, cardModels?: string[]) {
+  const label = gpuModel || (cardModels?.length ? cardModels.join(' + ') : '')
+  const text = label.toLowerCase()
+  if (text.includes('+') || text.includes('×')) {
+    const primary = cardModels?.[0] ?? label
+    const primaryText = primary.toLowerCase()
+    const fabric =
+      primaryText.includes('910') || primaryText.includes('ascend') || primaryText.includes('昇腾')
+        ? { fabricLabel: 'HCCS', fabricPeakGBs: 392 }
+        : primaryText.includes('mlu') || primaryText.includes('思元') || primaryText.includes('寒武纪')
+          ? { fabricLabel: 'MLU-Link', fabricPeakGBs: 300 }
+          : primaryText.includes('深算') || primaryText.includes('hygon') || primaryText.includes('dcu')
+            ? { fabricLabel: 'xGMI', fabricPeakGBs: 200 }
+            : primaryText.includes('br104') || primaryText.includes('壁仞')
+              ? { fabricLabel: 'BR-Link', fabricPeakGBs: 256 }
+              : primaryText.includes('5090') || primaryText.includes('4060') || primaryText.includes('pcie')
+                ? { fabricLabel: 'PCIe', fabricPeakGBs: 0 }
+                : { fabricLabel: 'NVLink', fabricPeakGBs: 900 }
+    return { boardLabel: label, ...fabric, memCap: 80 }
+  }
+  if (text.includes('910c')) {
+    return { boardLabel: '昇腾 910C · 8× 64GB', fabricLabel: 'HCCS', fabricPeakGBs: 392, memCap: 64 }
+  }
   if (text.includes('910b') || text.includes('ascend') || text.includes('昇腾')) {
     return { boardLabel: '昇腾 910B · 8× 64GB', fabricLabel: 'HCCS', fabricPeakGBs: 392, memCap: 64 }
   }
-  if (text.includes('mlu370') || text.includes('寒武纪')) {
-    return { boardLabel: 'MLU370-X8 · 8× 48GB', fabricLabel: 'MLU-Link', fabricPeakGBs: 200, memCap: 48 }
+  if (text.includes('mlu590') || text.includes('思元') || text.includes('寒武纪')) {
+    return { boardLabel: '思元 590 · 8× 48GB', fabricLabel: 'MLU-Link', fabricPeakGBs: 300, memCap: 48 }
+  }
+  if (text.includes('深算') || text.includes('hygon') || text.includes('dcu') || text.includes('海光')) {
+    return { boardLabel: '海光深算二号 · 8× 32GB', fabricLabel: 'xGMI', fabricPeakGBs: 200, memCap: 32 }
   }
   if (text.includes('br104') || text.includes('壁仞')) {
     return { boardLabel: 'BR104 · 8× 32GB', fabricLabel: 'BR-Link', fabricPeakGBs: 256, memCap: 32 }
   }
+  if (text.includes('5090') && text.includes('4060')) {
+    return { boardLabel: 'RTX 5090×4 + RTX 4060×4', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 32 }
+  }
+  if (text.includes('5090')) {
+    return { boardLabel: 'RTX 5090 · 8× 32GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 32 }
+  }
+  if (text.includes('4060')) {
+    return { boardLabel: 'RTX 4060 · 8× 8GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 8 }
+  }
+  if (text.includes('h200')) {
+    return { boardLabel: 'HGX H200 · 8× 141GB', fabricLabel: 'NVLink', fabricPeakGBs: 900, memCap: 141 }
+  }
+  if (text.includes('h20')) {
+    return { boardLabel: 'HGX H20 · 8× 96GB', fabricLabel: 'NVLink', fabricPeakGBs: 900, memCap: 96 }
+  }
+  if (text.includes('v100')) {
+    return { boardLabel: 'DGX V100 · 8× 32GB', fabricLabel: 'NVLink', fabricPeakGBs: 300, memCap: 32 }
+  }
   if (text.includes('a800')) {
-    return { boardLabel: 'HGX A800 · 8× 80GB', fabricLabel: 'NVLink', fabricPeakGBs: 600, memCap: 80 }
+    return { boardLabel: 'HGX A800 · 8× 80GB', fabricLabel: 'NVLink', fabricPeakGBs: 400, memCap: 80 }
+  }
+  if (text.includes('a100') && text.includes('pcie')) {
+    return { boardLabel: 'A100-PCIe · 8× 80GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 80 }
   }
   if (text.includes('a100')) {
     return { boardLabel: 'HGX A100 · 8× 80GB', fabricLabel: 'NVLink', fabricPeakGBs: 600, memCap: 80 }
@@ -107,7 +152,9 @@ export function buildChassis(workload: Workload, servers: ServerNode[], tick: nu
           hostname: allocation.hostname,
           indices:
             scene === 'C'
-              ? [0, 1, 2, 3, 4, 5, 6, 7]
+              ? allocation.gpuIndices.length > 0
+                ? allocation.gpuIndices
+                : [0, 1, 2, 3, 4, 5, 6, 7]
               : allocation.gpuIndices.length > 0
                 ? allocation.gpuIndices
                 : [2],
@@ -120,20 +167,24 @@ export function buildChassis(workload: Workload, servers: ServerNode[], tick: nu
           },
         ]
 
-  if (scene === 'C' && specs.length === 1 && workload.gpuCount > 8) {
-    const extra = Math.min(4, Math.ceil(workload.gpuCount / 8)) - 1
+  if (scene === 'C' && specs.length === 1 && workload.gpuCount > specs[0].indices.length) {
+    const perNode = Math.max(4, specs[0].indices.length || 8)
+    const extra = Math.min(4, Math.ceil(workload.gpuCount / perNode)) - 1
     for (let i = 0; i < extra; i++) {
       specs.push({
         id: `virtual-node-${i + 2}`,
         hostname: `fp-cluster-js-node${String(i + 9).padStart(2, '0')}`,
-        indices: [0, 1, 2, 3, 4, 5, 6, 7],
+        indices: Array.from({ length: perNode }, (_, index) => index),
       })
     }
   }
 
   return specs.map((spec) => {
     const server = servers.find((item) => item.id === spec.id)
-    const meta = boardMeta(server?.gpuModel)
+    const meta = boardMeta(
+      server?.gpuModel,
+      server?.gpus.map((gpu) => gpu.cardModel),
+    )
     const active = new Set(spec.indices)
     return {
       id: spec.id,
@@ -143,6 +194,7 @@ export function buildChassis(workload: Workload, servers: ServerNode[], tick: nu
       fabricLabel: meta.fabricLabel,
       fabricPeakGBs: meta.fabricPeakGBs,
       active: spec.indices,
+      // 调度流可视化固定 8 槽布局；完整槽位见节点列表
       slots: Array.from({ length: 8 }, (_, index) => {
         const gpu = server?.gpus[index]
         const on = active.has(index)

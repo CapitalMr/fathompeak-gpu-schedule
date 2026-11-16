@@ -68,7 +68,7 @@ export function FleetStatusBar({ history }: { history: TelemetrySample[] }) {
       <StatCard
         label="Total GPUs"
         value={String(latest.totalGpus)}
-        hint="H100 80GB HBM3"
+        hint="多卡型混部集群"
         color="#8e8ea0"
         series={history.map((item) => item.totalGpus)}
       />

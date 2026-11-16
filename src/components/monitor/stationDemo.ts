@@ -36,19 +36,31 @@ export interface StationDemoProfile {
 }
 
 const H100 = 'NVIDIA H100 80GB HBM3'
+const H200 = 'NVIDIA H200 141GB HBM3e'
+const H20 = 'NVIDIA H20 96GB HBM3'
 const A800 = 'NVIDIA A800-SXM4-80GB'
-const A100 = 'NVIDIA A100-SXM4-80GB'
-const ASCEND = '华为昇腾 Ascend 910B 64GB'
-const MLU = '寒武纪 MLU370-X8 48GB'
-const BR104 = '壁仞 BR104 32GB'
+const A100SXM = 'NVIDIA A100-SXM4-80GB'
+const A100PCIE = 'NVIDIA A100-PCIe-80GB'
+const V100 = 'NVIDIA V100-SXM2-32GB'
+const RTX5090 = 'NVIDIA GeForce RTX 5090 32GB'
+const RTX4060 = 'NVIDIA GeForce RTX 4060 8GB'
+const ASCEND_B = '华为昇腾 Ascend 910B 64GB'
+const ASCEND_C = '华为昇腾 Ascend 910C 64GB'
+const MLU590 = '寒武纪思元 MLU590 48GB'
 
 const COLORS = {
   h100: { requestColor: '#C2410C', fillFrom: 'rgba(194,65,12,0.5)', fillTo: 'rgba(194,65,12,0.08)' },
+  h200: { requestColor: '#EA580C', fillFrom: 'rgba(234,88,12,0.48)', fillTo: 'rgba(234,88,12,0.08)' },
+  h20: { requestColor: '#F97316', fillFrom: 'rgba(249,115,22,0.45)', fillTo: 'rgba(249,115,22,0.08)' },
   a800: { requestColor: '#A16207', fillFrom: 'rgba(161,98,7,0.48)', fillTo: 'rgba(161,98,7,0.08)' },
-  a100: { requestColor: '#0369A1', fillFrom: 'rgba(3,105,161,0.48)', fillTo: 'rgba(3,105,161,0.08)' },
+  a100sxm: { requestColor: '#0369A1', fillFrom: 'rgba(3,105,161,0.48)', fillTo: 'rgba(3,105,161,0.08)' },
+  a100pcie: { requestColor: '#0284C7', fillFrom: 'rgba(2,132,199,0.45)', fillTo: 'rgba(2,132,199,0.08)' },
+  v100: { requestColor: '#0E7490', fillFrom: 'rgba(14,116,144,0.45)', fillTo: 'rgba(14,116,144,0.08)' },
+  rtx5090: { requestColor: '#7C3AED', fillFrom: 'rgba(124,58,237,0.45)', fillTo: 'rgba(124,58,237,0.08)' },
+  rtx4060: { requestColor: '#8B5CF6', fillFrom: 'rgba(139,92,246,0.42)', fillTo: 'rgba(139,92,246,0.08)' },
   ascend910b: { requestColor: '#BE123C', fillFrom: 'rgba(190,18,60,0.48)', fillTo: 'rgba(190,18,60,0.08)' },
-  mlu370: { requestColor: '#0F766E', fillFrom: 'rgba(15,118,110,0.48)', fillTo: 'rgba(15,118,110,0.08)' },
-  br104: { requestColor: '#6D28D9', fillFrom: 'rgba(109,40,217,0.48)', fillTo: 'rgba(109,40,217,0.08)' },
+  ascend910c: { requestColor: '#E11D48', fillFrom: 'rgba(225,29,72,0.45)', fillTo: 'rgba(225,29,72,0.08)' },
+  mlu590: { requestColor: '#0F766E', fillFrom: 'rgba(15,118,110,0.48)', fillTo: 'rgba(15,118,110,0.08)' },
 }
 
 function sku(
@@ -66,8 +78,7 @@ function sku(
 
 /**
  * 各站 profile：SKU 比例 + 园区负载 mood。
- * 温度/功耗/利用率在概览页优先由真实节点采样推导；此处为无节点时的兜底，
- * 量纲对齐公开 TDP/显存；国产与 NVIDIA 混部。
+ * 温度/功耗/利用率在概览页优先由真实节点采样推导；此处为无节点时的兜底。
  */
 const PROFILES: Record<string, StationDemoProfile> = {
   'st-hbsz': {
@@ -76,11 +87,12 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'busy',
     gauges: { temp: 68.4, power: 52.6, totalUtil: 58.2, usedUtil: 84.6 },
     skus: [
-      sku('h100', H100, 64, 58, 42, 60, 48, 'h100'),
-      sku('a800', A800, 40, 36, 26, 38, 30, 'a800'),
-      sku('ascend910b', ASCEND, 56, 48, 34, 52, 40, 'ascend910b'),
-      sku('mlu370', MLU, 24, 18, 12, 20, 14, 'mlu370'),
-      sku('br104', BR104, 16, 12, 8, 14, 10, 'br104'),
+      sku('h100', H100, 48, 42, 30, 46, 36, 'h100'),
+      sku('h200', H200, 24, 20, 14, 22, 16, 'h200'),
+      sku('rtx5090', RTX5090, 32, 28, 20, 30, 24, 'rtx5090'),
+      sku('rtx4060', RTX4060, 32, 24, 14, 28, 18, 'rtx4060'),
+      sku('ascend910b', ASCEND_B, 40, 34, 24, 38, 28, 'ascend910b'),
+      sku('mlu590', MLU590, 24, 18, 12, 20, 14, 'mlu590'),
     ],
     smBias: 6,
     tensorBias: 4,
@@ -96,11 +108,12 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'hot',
     gauges: { temp: 76.8, power: 78.4, totalUtil: 81.2, usedUtil: 93.5 },
     skus: [
-      sku('h100', H100, 80, 78, 70, 79, 74, 'h100'),
-      sku('a800', A800, 32, 30, 26, 31, 28, 'a800'),
-      sku('a100', A100, 16, 15, 12, 16, 14, 'a100'),
-      sku('ascend910b', ASCEND, 48, 46, 40, 47, 42, 'ascend910b'),
-      sku('mlu370', MLU, 24, 22, 18, 23, 20, 'mlu370'),
+      sku('h100', H100, 56, 54, 48, 55, 50, 'h100'),
+      sku('h20', H20, 32, 30, 26, 31, 28, 'h20'),
+      sku('a800', A800, 24, 22, 18, 23, 20, 'a800'),
+      sku('a100sxm', A100SXM, 24, 22, 18, 23, 20, 'a100sxm'),
+      sku('ascend910c', ASCEND_C, 48, 46, 40, 47, 42, 'ascend910c'),
+      sku('mlu590', MLU590, 24, 22, 18, 23, 20, 'mlu590'),
     ],
     smBias: 12,
     tensorBias: 10,
@@ -116,10 +129,11 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'idle',
     gauges: { temp: 41.2, power: 18.6, totalUtil: 16.4, usedUtil: 48.2 },
     skus: [
-      sku('ascend910b', ASCEND, 64, 16, 6, 24, 12, 'ascend910b'),
-      sku('mlu370', MLU, 40, 8, 3, 14, 6, 'mlu370'),
-      sku('br104', BR104, 24, 4, 1, 8, 3, 'br104'),
-      sku('h100', H100, 24, 6, 2, 10, 4, 'h100'),
+      sku('ascend910b', ASCEND_B, 48, 12, 4, 18, 8, 'ascend910b'),
+      sku('ascend910c', ASCEND_C, 32, 8, 2, 14, 6, 'ascend910c'),
+      sku('mlu590', MLU590, 40, 8, 3, 14, 6, 'mlu590'),
+      sku('v100', V100, 24, 4, 1, 8, 3, 'v100'),
+      sku('h100', H100, 16, 3, 1, 6, 2, 'h100'),
     ],
     smBias: -10,
     tensorBias: -8,
@@ -135,10 +149,10 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'hot',
     gauges: { temp: 78.6, power: 86.2, totalUtil: 84.8, usedUtil: 95.2 },
     skus: [
-      sku('h100', H100, 40, 38, 34, 39, 36, 'h100'),
-      sku('ascend910b', ASCEND, 72, 70, 64, 71, 66, 'ascend910b'),
-      sku('mlu370', MLU, 40, 38, 34, 39, 36, 'mlu370'),
-      sku('br104', BR104, 24, 22, 18, 23, 20, 'br104'),
+      sku('h200', H200, 32, 30, 26, 31, 28, 'h200'),
+      sku('ascend910c', ASCEND_C, 56, 54, 48, 55, 50, 'ascend910c'),
+      sku('mlu590', MLU590, 48, 46, 40, 47, 42, 'mlu590'),
+      sku('h100', H100, 32, 30, 26, 31, 28, 'h100'),
     ],
     smBias: 14,
     tensorBias: 12,
@@ -154,11 +168,11 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'warm',
     gauges: { temp: 62.4, power: 36.8, totalUtil: 44.6, usedUtil: 72.8 },
     skus: [
-      sku('h100', H100, 48, 30, 18, 36, 24, 'h100'),
-      sku('a800', A800, 40, 26, 16, 32, 20, 'a800'),
-      sku('ascend910b', ASCEND, 56, 34, 20, 42, 28, 'ascend910b'),
-      sku('mlu370', MLU, 32, 18, 10, 24, 14, 'mlu370'),
-      sku('a100', A100, 24, 14, 8, 18, 12, 'a100'),
+      sku('rtx5090', RTX5090, 40, 28, 16, 34, 22, 'rtx5090'),
+      sku('rtx4060', RTX4060, 40, 24, 12, 30, 18, 'rtx4060'),
+      sku('v100', V100, 32, 18, 10, 24, 14, 'v100'),
+      sku('a100pcie', A100PCIE, 24, 14, 8, 18, 12, 'a100pcie'),
+      sku('h100', H100, 24, 14, 8, 18, 12, 'h100'),
     ],
     smBias: -2,
     tensorBias: -1,
@@ -174,11 +188,11 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'warm',
     gauges: { temp: 58.6, power: 28.4, totalUtil: 36.2, usedUtil: 66.4 },
     skus: [
-      sku('a100', A100, 48, 26, 14, 32, 20, 'a100'),
-      sku('ascend910b', ASCEND, 48, 24, 12, 30, 18, 'ascend910b'),
-      sku('mlu370', MLU, 32, 16, 8, 22, 12, 'mlu370'),
-      sku('br104', BR104, 24, 10, 5, 14, 8, 'br104'),
-      sku('h100', H100, 24, 12, 6, 16, 10, 'h100'),
+      sku('a100sxm', A100SXM, 32, 18, 10, 24, 14, 'a100sxm'),
+      sku('a800', A800, 24, 14, 8, 18, 12, 'a800'),
+      sku('v100', V100, 32, 16, 8, 22, 12, 'v100'),
+      sku('ascend910b', ASCEND_B, 32, 16, 8, 22, 12, 'ascend910b'),
+      sku('h20', H20, 24, 12, 6, 16, 10, 'h20'),
     ],
     smBias: -4,
     tensorBias: -3,
@@ -194,9 +208,9 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'idle',
     gauges: { temp: 38.8, power: 14.2, totalUtil: 11.6, usedUtil: 39.4 },
     skus: [
-      sku('ascend910b', ASCEND, 40, 6, 2, 12, 5, 'ascend910b'),
-      sku('mlu370', MLU, 32, 4, 1, 8, 3, 'mlu370'),
-      sku('br104', BR104, 24, 3, 1, 6, 2, 'br104'),
+      sku('ascend910b', ASCEND_B, 40, 6, 2, 12, 5, 'ascend910b'),
+      sku('mlu590', MLU590, 32, 4, 1, 8, 3, 'mlu590'),
+      sku('ascend910c', ASCEND_C, 24, 3, 1, 6, 2, 'ascend910c'),
       sku('a800', A800, 16, 2, 1, 5, 2, 'a800'),
     ],
     smBias: -12,
@@ -225,12 +239,20 @@ export function walkSeries(base: number, max: number, total: number, depth = DEM
     value = clamp(Math.round(base + wave + step + (Math.random() - 0.5) * 0.6), 0, Math.min(total, max + 2))
     out.push(value)
   }
-  // 末点贴近当前基准，方便 Last 与表一致
   out[out.length - 1] = base
   return out
 }
 
 export function nextWalk(current: number, total: number, ceiling: number) {
-  const delta = Math.random() < 0.22 ? (Math.random() < 0.55 ? 1 : -1) : Math.random() < 0.35 ? (Math.random() < 0.5 ? 1 : -1) : 0
+  const delta =
+    Math.random() < 0.22
+      ? Math.random() < 0.55
+        ? 1
+        : -1
+      : Math.random() < 0.35
+        ? Math.random() < 0.5
+          ? 1
+          : -1
+        : 0
   return clamp(current + delta, 0, Math.min(total, ceiling))
 }

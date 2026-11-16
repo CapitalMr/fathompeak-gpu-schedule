@@ -581,15 +581,15 @@ export function GrafanaWall({ servers, stationId }: { servers: ServerNode[]; sta
               <tbody>
                 {hosts.map((server, index) => {
                   const fault = server.gpus.some((gpu) => gpu.state === 'fault')
-                  const spec = specForModel(server.gpuModel)
+                  const primaryCard = server.gpus[0]?.cardModel || server.gpuModel
+                  const spec = specForModel(primaryCard)
                   const util =
                     server.gpus.reduce((sum, gpu) => sum + gpu.utilization, 0) / Math.max(1, server.gpus.length)
                   // 主机 CPU：推理服务常见与 GPU util 相关，约 18–55%
                   const cpu = Math.round(clamp(16 + util * 0.38 + (server.rackCol % 3) * 2.2, 8, 78) * 10) / 10
+                  const memTotal = server.gpus.reduce((sum, gpu) => sum + gpu.memoryTotalGb, 0)
                   const mem = Math.round(
-                    (server.gpus.reduce((sum, gpu) => sum + gpu.memoryUsedGb, 0) /
-                      (server.gpus.length * spec.memoryGb)) *
-                      100,
+                    (server.gpus.reduce((sum, gpu) => sum + gpu.memoryUsedGb, 0) / Math.max(1, memTotal)) * 100,
                   )
                   const smClock = (spec.smBaseGhz + (spec.smBoostGhz - spec.smBaseGhz) * (util / 100)).toFixed(2)
                   return (
@@ -597,7 +597,9 @@ export function GrafanaWall({ servers, stationId }: { servers: ServerNode[]; sta
                       <td className="px-2 py-1.5 font-mono text-infer">{displayHostname(server.hostname)}</td>
                       <td className="px-2 py-1.5 font-mono">{server.ip}</td>
                       <td className="px-2 py-1.5 font-mono">{spec.driverLabel}</td>
-                      <td className="px-2 py-1.5">{spec.short}</td>
+                      <td className="px-2 py-1.5" title={server.gpuModel}>
+                        {server.gpuModel}
+                      </td>
                       <td className={`px-2 py-1.5 text-center text-white ${fault ? 'bg-alert' : 'bg-[#2f9e44]'}`}>
                         {fault ? '异常' : '正常'}
                       </td>

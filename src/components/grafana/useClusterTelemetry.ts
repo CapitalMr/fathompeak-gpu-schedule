@@ -51,7 +51,7 @@ function round2(n: number) {
 
 export function measureServers(servers: ServerNode[], tick: number, stationId = 'st-hbsz'): Omit<TelemetrySample, 't'> {
   const profile = stationDemo(stationId)
-  const models = servers.map((server) => server.gpuModel)
+  const models = servers.flatMap((server) => server.gpus.map((gpu) => gpu.cardModel || server.gpuModel))
   const spec = fleetWeightedSpec(models)
   const gpus = servers.flatMap((server) => server.gpus)
   const totalGpus = gpus.length

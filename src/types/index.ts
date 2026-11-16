@@ -34,12 +34,15 @@ export interface PowerStation {
 
 export interface GpuSlot {
   index: number
+  /** 物理卡型号，如 NVIDIA H100 / RTX 5090 / Ascend 910B */
+  cardModel: string
   state: GpuState
   memoryUsedGb: number
   memoryTotalGb: number
   utilization: number
   temperature: number
   powerW: number
+  /** 当前推理/训练任务绑定的模型名 */
   modelName?: string
   workloadId?: string
 }
@@ -51,11 +54,15 @@ export interface ServerNode {
   poolId: string
   rackRow: number
   rackCol: number
+  /** 机箱卡型摘要（同卡或混卡），如「RTX 5090×4 + RTX 4060×4」 */
   gpuModel: string
   gpus: GpuSlot[]
+  /** 节点健康状态（字段名历史兼容；展示层用「状态」） */
   nvlinkStatus: 'healthy' | 'degraded' | 'offline'
   rdmaGbps: number
   temperature: number
+  /** 机箱底板功耗（CPU/内存/网卡/PSU），随槽位规模变化 */
+  chassisBaseW: number
   powerW: number
   stationIds: string[]
 }

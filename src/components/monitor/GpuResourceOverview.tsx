@@ -32,12 +32,20 @@ interface Gauges {
 function toneColors(kind: SkuKind): Pick<SkuSeed, 'requestColor' | 'fillFrom' | 'fillTo'> {
   const map: Record<SkuKind, Pick<SkuSeed, 'requestColor' | 'fillFrom' | 'fillTo'>> = {
     h100: { requestColor: '#C2410C', fillFrom: 'rgba(194,65,12,0.5)', fillTo: 'rgba(194,65,12,0.08)' },
+    h200: { requestColor: '#EA580C', fillFrom: 'rgba(234,88,12,0.48)', fillTo: 'rgba(234,88,12,0.08)' },
+    h20: { requestColor: '#F97316', fillFrom: 'rgba(249,115,22,0.45)', fillTo: 'rgba(249,115,22,0.08)' },
     a800: { requestColor: '#A16207', fillFrom: 'rgba(161,98,7,0.48)', fillTo: 'rgba(161,98,7,0.08)' },
-    a100: { requestColor: '#0369A1', fillFrom: 'rgba(3,105,161,0.48)', fillTo: 'rgba(3,105,161,0.08)' },
+    a100sxm: { requestColor: '#0369A1', fillFrom: 'rgba(3,105,161,0.48)', fillTo: 'rgba(3,105,161,0.08)' },
+    a100pcie: { requestColor: '#0284C7', fillFrom: 'rgba(2,132,199,0.45)', fillTo: 'rgba(2,132,199,0.08)' },
+    v100: { requestColor: '#0E7490', fillFrom: 'rgba(14,116,144,0.45)', fillTo: 'rgba(14,116,144,0.08)' },
+    rtx5090: { requestColor: '#7C3AED', fillFrom: 'rgba(124,58,237,0.45)', fillTo: 'rgba(124,58,237,0.08)' },
+    rtx4060: { requestColor: '#8B5CF6', fillFrom: 'rgba(139,92,246,0.42)', fillTo: 'rgba(139,92,246,0.08)' },
     ascend910b: { requestColor: '#BE123C', fillFrom: 'rgba(190,18,60,0.48)', fillTo: 'rgba(190,18,60,0.08)' },
-    mlu370: { requestColor: '#0F766E', fillFrom: 'rgba(15,118,110,0.48)', fillTo: 'rgba(15,118,110,0.08)' },
+    ascend910c: { requestColor: '#E11D48', fillFrom: 'rgba(225,29,72,0.45)', fillTo: 'rgba(225,29,72,0.08)' },
+    mlu590: { requestColor: '#0F766E', fillFrom: 'rgba(15,118,110,0.48)', fillTo: 'rgba(15,118,110,0.08)' },
+    hygon: { requestColor: '#15803D', fillFrom: 'rgba(21,128,61,0.45)', fillTo: 'rgba(21,128,61,0.08)' },
     br104: { requestColor: '#6D28D9', fillFrom: 'rgba(109,40,217,0.48)', fillTo: 'rgba(109,40,217,0.08)' },
-  }
+  } // hygon/br104 仅兼容旧数据解析，盘点主推 SKU 不含二者
   return map[kind]
 }
 
@@ -58,13 +66,12 @@ function inventorySkus(servers: ServerNode[], stationId: string): SkuState[] {
     { total: number; request: number; used: number }
   >
   for (const server of servers) {
-    const kind = resolveSkuKind(server.gpuModel)
     for (const gpu of server.gpus) {
       if (gpu.state === 'fault') continue
+      const kind = resolveSkuKind(gpu.cardModel || server.gpuModel)
       buckets[kind].total += 1
       if (gpu.state !== 'idle') {
         buckets[kind].request += 1
-        // “已使用”：真正在跑且有显存占用（申请未跑完 / 冷启动不算 used）
         if (gpu.utilization >= 20 || gpu.memoryUsedGb >= 8) buckets[kind].used += 1
       }
     }
@@ -133,20 +140,25 @@ function fleetDigest(servers: ServerNode[], requested: number, used: number, tot
   const fbUsedGb = all.reduce((sum, gpu) => sum + gpu.memoryUsedGb, 0)
   const fbTotalGb = all.reduce((sum, gpu) => sum + gpu.memoryTotalGb, 0)
   const gpuPowerW = all.reduce((sum, gpu) => sum + gpu.powerW, 0)
-  const tdpCap = servers.reduce((sum, server) => {
-    const kind = resolveSkuKind(server.gpuModel)
-    return sum + GPU_SPECS[kind].tdpW * server.gpus.length
-  }, 0)
+  const tdpCap = servers.reduce(
+    (sum, server) =>
+      sum +
+      server.gpus.reduce((n, gpu) => n + GPU_SPECS[resolveSkuKind(gpu.cardModel || server.gpuModel)].tdpW, 0),
+    0,
+  )
   const vendorMap: Record<string, { name: string; color: string; value: number }> = {
     nvidia: { name: 'NVIDIA', color: '#0369A1', value: 0 },
     huawei: { name: '昇腾', color: '#BE123C', value: 0 },
     cambricon: { name: '寒武纪', color: '#0F766E', value: 0 },
+    hygon: { name: '海光', color: '#15803D', value: 0 },
     biren: { name: '壁仞', color: '#6D28D9', value: 0 },
   }
   for (const server of servers) {
-    const kind = resolveSkuKind(server.gpuModel)
-    const vendor = GPU_SPECS[kind].vendor
-    vendorMap[vendor].value += server.gpus.filter((gpu) => gpu.state !== 'fault').length
+    for (const gpu of server.gpus) {
+      if (gpu.state === 'fault') continue
+      const vendor = GPU_SPECS[resolveSkuKind(gpu.cardModel || server.gpuModel)].vendor
+      vendorMap[vendor].value += 1
+    }
   }
   return {
     fbUsedTb: Math.round((fbUsedGb / 1024) * 100) / 100,
@@ -319,7 +331,10 @@ export function GpuResourceOverview({ servers, stationId }: { servers: ServerNod
                   key={`${stationId}-${sku.id}`}
                   sku={sku}
                   times={times}
-                  server={servers.find((item) => resolveSkuKind(item.gpuModel) === sku.kind) ?? servers[0]}
+                  server={
+                    servers.find((item) => item.gpus.some((g) => resolveSkuKind(g.cardModel) === sku.kind)) ??
+                    servers[0]
+                  }
                   tempBias={profile.tempBias}
                 />
               ))}

@@ -16,25 +16,41 @@ import type {
   WorkloadPod,
   WorkloadType,
 } from '../types'
+import {
+  HOMOGENEOUS_LAYOUTS,
+  MIXED_LAYOUTS,
+  GPU_SPECS,
+  estimateChassisBaseW,
+  expandLayout,
+  preferredSkusForModel,
+  resolveSkuKind,
+  summarizeCardModels,
+  type SkuKind,
+} from '../components/monitor/gpuSpecs'
 
 const USER = 'wangxiaoliang@fathompeak.cn'
 
-// 延迟引用规格，避免 mock ↔ monitor 循环依赖在打包期膨胀；数值与 gpuSpecs 对齐
-function gpuSpec(gpuModel: string) {
-  const text = gpuModel.toLowerCase()
-  if (text.includes('910b') || text.includes('ascend') || text.includes('昇腾')) {
-    return { memoryGb: 64, tdpW: 400, idleW: 90, vendor: 'huawei' as const }
+function gpuSpec(cardOrChassis: string) {
+  const spec = GPU_SPECS[resolveSkuKind(cardOrChassis)]
+  return {
+    memoryGb: spec.memoryGb,
+    tdpW: spec.tdpW,
+    idleW: Math.round((spec.idleW[0] + spec.idleW[1]) / 2),
+    vendor: spec.vendor,
+    title: spec.title,
   }
-  if (text.includes('mlu370') || text.includes('寒武纪')) {
-    return { memoryGb: 48, tdpW: 250, idleW: 60, vendor: 'cambricon' as const }
-  }
-  if (text.includes('br104') || text.includes('壁仞')) {
-    return { memoryGb: 32, tdpW: 300, idleW: 65, vendor: 'biren' as const }
-  }
-  if (text.includes('a800') || text.includes('a100')) {
-    return { memoryGb: 80, tdpW: 400, idleW: 70, vendor: 'nvidia' as const }
-  }
-  return { memoryGb: 80, tdpW: 700, idleW: 100, vendor: 'nvidia' as const }
+}
+
+function cardTitle(kind: SkuKind) {
+  return GPU_SPECS[kind].title
+}
+
+/** 按卡型亲和度打分：优先匹配模型推荐 SKU */
+function affinityScore(cardModel: string, preferred: SkuKind[]) {
+  const kind = resolveSkuKind(cardModel)
+  const idx = preferred.indexOf(kind)
+  if (idx >= 0) return 100 - idx * 12
+  return 0
 }
 
 export const STATIONS: PowerStation[] = [
@@ -211,7 +227,7 @@ export const POLICIES: PolicyFlag[] = [
   {
     id: 'pol-mig',
     name: 'GPU 显存切分隔离',
-    description: '允许在 H100 上按 MIG / 显存配额切分，保障多租户任务隔离',
+    description: '允许按卡型亲和与显存配额切分，保障多租户任务隔离',
     enabled: false,
   },
   {
@@ -233,19 +249,38 @@ function seeded(n: number) {
   return x - Math.floor(x)
 }
 
-function pickGpuModel(seed: number): string {
-  // 混部：NVIDIA ~55%，国产昇腾/寒武纪/壁仞 ~45%
-  const r = seeded(seed + 41)
-  if (r < 0.28) return 'NVIDIA H100 80GB HBM3'
-  if (r < 0.42) return 'NVIDIA A800-SXM4-80GB'
-  if (r < 0.55) return 'NVIDIA A100-SXM4-80GB'
-  if (r < 0.78) return '华为昇腾 Ascend 910B 64GB'
-  if (r < 0.9) return '寒武纪 MLU370-X8 48GB'
-  return '壁仞 BR104 32GB'
+function pickChassisLayout(seed: number) {
+  // 约 1/3 节点为合理混卡，保证清单里能稳定看到「同节点多型号」
+  const useMixed = seeded(seed + 41) < 0.34
+  const pool = useMixed ? MIXED_LAYOUTS : HOMOGENEOUS_LAYOUTS
+  const idx = Math.floor(seeded(seed + 73) * pool.length)
+  return pool[Math.min(idx, pool.length - 1)]
 }
 
-function makeGpu(index: number, seed: number, gpuModel: string): GpuSlot {
-  const spec = gpuSpec(gpuModel)
+/** 按卡型挑一个亲和模型，用于初始占位负载 */
+function pickAffinityModel(cardModel: string, seed: number): string {
+  const kind = resolveSkuKind(cardModel)
+  const catalog: Array<{ model: string; kinds: SkuKind[] }> = [
+    { model: 'MiniMax-H3', kinds: ['rtx5090', 'h20', 'h100'] },
+    { model: 'MiniMax-M2', kinds: ['rtx5090', 'rtx4060'] },
+    { model: 'Qwen-7B-Chat', kinds: ['v100', 'rtx4060', 'a100pcie'] },
+    { model: 'Qwen2.5-14B', kinds: ['v100', 'a100pcie', 'a800'] },
+    { model: 'Qwen2.5-72B', kinds: ['h100', 'h200', 'h20'] },
+    { model: 'Llama-3-70B-Instruct', kinds: ['h100', 'h200', 'a100sxm'] },
+    { model: 'DeepSeek-V4', kinds: ['ascend910c', 'ascend910b', 'mlu590'] },
+    { model: 'DeepSeek-V3-671B', kinds: ['ascend910c', 'ascend910b', 'h200'] },
+    { model: 'InternVL2-40B', kinds: ['mlu590', 'ascend910b', 'a800'] },
+    { model: 'Whisper-Large-V3', kinds: ['rtx4060', 'v100', 'a100pcie'] },
+    { model: 'BGE-M3', kinds: ['rtx4060', 'v100', 'a100pcie'] },
+    { model: 'GLM-4-9B', kinds: ['rtx5090', 'h20', 'a100pcie'] },
+  ]
+  const matched = catalog.filter((item) => item.kinds.includes(kind))
+  const pool = matched.length ? matched : catalog
+  return pool[Math.floor(seeded(seed) * pool.length) % pool.length].model
+}
+
+function makeGpu(index: number, seed: number, cardModel: string): GpuSlot {
+  const spec = gpuSpec(cardModel)
   const memCap = spec.memoryGb
   const r = seeded(seed + index * 17)
   let state: GpuState = 'idle'
@@ -256,15 +291,14 @@ function makeGpu(index: number, seed: number, gpuModel: string): GpuSlot {
 
   if (r > 0.72) {
     state = 'infer'
-    // 单卡推理显存按卡容量缩放（32/48/64/80GB）
     memoryUsedGb = Math.round(memCap * (0.22 + seeded(seed + index * 5) * 0.35))
     utilization = 55 + Math.round(seeded(seed + index * 7) * 35)
-    modelName = ['Qwen-7B-Chat', 'Qwen2.5-14B', 'BGE-M3', 'Whisper-Large-V3'][Math.floor(seeded(seed + index * 9) * 4)]
+    modelName = pickAffinityModel(cardModel, seed + index * 9)
   } else if (r > 0.88) {
     state = 'multi'
     memoryUsedGb = Math.round(memCap * (0.55 + seeded(seed + index * 11) * 0.35))
     utilization = 70 + Math.round(seeded(seed + index * 13) * 25)
-    modelName = 'Llama-3-70B-Instruct'
+    modelName = pickAffinityModel(cardModel, seed + index * 31)
   }
 
   if (seeded(seed + index * 19) > 0.992) {
@@ -286,6 +320,7 @@ function makeGpu(index: number, seed: number, gpuModel: string): GpuSlot {
 
   return {
     index,
+    cardModel,
     state,
     memoryUsedGb: Math.min(memoryUsedGb, memCap - 2),
     memoryTotalGb: memCap,
@@ -309,11 +344,12 @@ export function buildServers(): ServerNode[] {
       const hostname = `${pool.name.toLowerCase().replace(/_/g, '-')}-n${String(i + 1).padStart(2, '0')}`
       const ip = `10.${40 + poolIdx}.${row + 1}.${col + 10}`
       const seed = globalIdx * 97 + poolIdx * 13
-      const gpuModel = pickGpuModel(seed)
-      const gpus = Array.from({ length: 8 }, (_, gi) => makeGpu(gi, seed, gpuModel))
+      const layout = pickChassisLayout(seed)
+      const slotKinds = expandLayout(layout)
+      const gpus = slotKinds.map((kind, gi) => makeGpu(gi, seed, cardTitle(kind)))
+      const gpuModel = summarizeCardModels(gpus.map((g) => g.cardModel))
       const gpuPower = gpus.reduce((sum, gpu) => sum + gpu.powerW, 0)
-      // HGX/DGX 机箱：GPU 功耗 + CPU/内存/网卡/PSU（约 0.9–1.3 kW）
-      const chassisW = 950 + Math.round(seeded(seed + 7) * 350)
+      const chassisBaseW = estimateChassisBaseW(gpus.length, seeded(seed + 7))
 
       servers.push({
         id,
@@ -325,10 +361,10 @@ export function buildServers(): ServerNode[] {
         gpuModel,
         gpus,
         nvlinkStatus: seeded(seed + 50) > 0.97 ? 'degraded' : 'healthy',
-        // IB HDR 200Gb/s 或 NDR 400Gb/s 常见；此处按 HDR 标称
         rdmaGbps: seeded(seed + 61) > 0.35 ? 400 : 200,
         temperature: Math.round(gpus.reduce((sum, gpu) => sum + gpu.temperature, 0) / gpus.length),
-        powerW: gpuPower + chassisW,
+        chassisBaseW,
+        powerW: gpuPower + chassisBaseW,
         stationIds: pool.stationIds,
       })
       globalIdx++
@@ -340,14 +376,14 @@ export function buildServers(): ServerNode[] {
 
 function applyGpuLoad(
   gpu: GpuSlot,
-  server: ServerNode,
+  _server: ServerNode,
   state: GpuState,
   model: string,
   workloadId: string,
   memoryUsedGb: number,
   utilization: number,
 ) {
-  const spec = gpuSpec(server.gpuModel)
+  const spec = gpuSpec(gpu.cardModel)
   gpu.state = state
   gpu.modelName = model
   gpu.workloadId = workloadId
@@ -362,9 +398,13 @@ function applyGpuLoad(
 }
 
 function refreshServerPower(server: ServerNode) {
-  const chassis = Math.max(900, server.powerW - server.gpus.reduce((sum, gpu) => sum + gpu.powerW, 0))
-  server.powerW = server.gpus.reduce((sum, gpu) => sum + gpu.powerW, 0) + Math.min(1400, Math.max(900, chassis))
-  server.temperature = Math.round(server.gpus.reduce((sum, gpu) => sum + gpu.temperature, 0) / server.gpus.length)
+  const chassis =
+    server.chassisBaseW || estimateChassisBaseW(server.gpus.length, 0.45)
+  server.chassisBaseW = chassis
+  server.powerW = server.gpus.reduce((sum, gpu) => sum + gpu.powerW, 0) + chassis
+  server.temperature = Math.round(
+    server.gpus.reduce((sum, gpu) => sum + gpu.temperature, 0) / Math.max(1, server.gpus.length),
+  )
 }
 
 function allocateGpus(
@@ -376,23 +416,31 @@ function allocateGpus(
   preferredPool?: string,
 ): Allocation[] {
   const allocations: Allocation[] = []
+  const preferred = preferredSkusForModel(model)
   const poolOrder = preferredPool
     ? [preferredPool, ...POOLS.map((p) => p.id).filter((id) => id !== preferredPool)]
     : POOLS.map((p) => p.id)
 
+  const sortByAffinity = (a: ServerNode, b: ServerNode) => {
+    const score = (s: ServerNode) =>
+      s.gpus
+        .filter((g) => g.state === 'idle')
+        .reduce((n, g) => n + affinityScore(g.cardModel, preferred), 0)
+    const aBusy = a.gpus.filter((g) => g.state !== 'idle').length
+    const bBusy = b.gpus.filter((g) => g.state !== 'idle').length
+    return score(b) - score(a) || bBusy - aBusy || a.id.localeCompare(b.id)
+  }
+
   if (strategy === 'single') {
     for (const poolId of poolOrder) {
-      const candidates = servers.filter((s) => s.poolId === poolId)
-      candidates.sort((a, b) => {
-        const aBusy = a.gpus.filter((g) => g.state !== 'idle').length
-        const bBusy = b.gpus.filter((g) => g.state !== 'idle').length
-        return bBusy - aBusy || a.id.localeCompare(b.id)
-      })
+      const candidates = servers.filter((s) => s.poolId === poolId).sort(sortByAffinity)
       for (const server of candidates) {
-        const free = server.gpus.find((g) => g.state === 'idle')
+        const free = [...server.gpus]
+          .filter((g) => g.state === 'idle')
+          .sort((a, b) => affinityScore(b.cardModel, preferred) - affinityScore(a.cardModel, preferred))[0]
         if (!free) continue
         const util = 60 + Math.round(Math.random() * 30)
-        const cap = gpuSpec(server.gpuModel).memoryGb
+        const cap = gpuSpec(free.cardModel).memoryGb
         applyGpuLoad(free, server, 'infer', model, workloadId, Math.round(cap * (0.25 + Math.random() * 0.35)), util)
         refreshServerPower(server)
         allocations.push({
@@ -408,15 +456,44 @@ function allocateGpus(
 
   if (strategy === 'tp') {
     for (const poolId of poolOrder) {
-      const candidates = servers.filter((s) => s.poolId === poolId)
+      const candidates = servers.filter((s) => s.poolId === poolId).sort(sortByAffinity)
       for (const server of candidates) {
-        const freeIndices = server.gpus.filter((g) => g.state === 'idle').map((g) => g.index)
-        if (freeIndices.length < count) continue
-        const chosen = freeIndices.slice(0, count)
-        const cap = gpuSpec(server.gpuModel).memoryGb
+        // 优先同型号空闲卡（混卡节点上保证 TP 亲和）
+        const byKind = new Map<SkuKind, number[]>()
+        server.gpus
+          .filter((g) => g.state === 'idle')
+          .forEach((g) => {
+            const kind = resolveSkuKind(g.cardModel)
+            const list = byKind.get(kind) ?? []
+            list.push(g.index)
+            byKind.set(kind, list)
+          })
+        let chosen: number[] | null = null
+        for (const kind of preferred) {
+          const list = byKind.get(kind)
+          if (list && list.length >= count) {
+            chosen = list.slice(0, count)
+            break
+          }
+        }
+        if (!chosen) {
+          for (const list of byKind.values()) {
+            if (list.length >= count) {
+              chosen = list.slice(0, count)
+              break
+            }
+          }
+        }
+        if (!chosen) {
+          const freeIndices = server.gpus.filter((g) => g.state === 'idle').map((g) => g.index)
+          if (freeIndices.length < count) continue
+          chosen = freeIndices.slice(0, count)
+        }
         chosen.forEach((gi) => {
+          const gpu = server.gpus[gi]
           const util = 75 + Math.round(Math.random() * 20)
-          applyGpuLoad(server.gpus[gi], server, 'multi', model, workloadId, Math.round(cap * (0.55 + Math.random() * 0.35)), util)
+          const cap = gpuSpec(gpu.cardModel).memoryGb
+          applyGpuLoad(gpu, server, 'multi', model, workloadId, Math.round(cap * (0.55 + Math.random() * 0.35)), util)
         })
         refreshServerPower(server)
         allocations.push({
@@ -430,25 +507,32 @@ function allocateGpus(
     }
   }
 
-  // Gang / PP: lock whole 8-GPU nodes across pools
-  const needed = Math.max(1, Math.ceil(count / 8))
+  // Gang / PP: 按实际槽位数整机锁定，直到凑满 gpuCount
+  const nodeScore = (s: ServerNode) =>
+    s.gpus.reduce((n, g) => n + affinityScore(g.cardModel, preferred), 0) / Math.max(1, s.gpus.length)
   const picked: ServerNode[] = []
+  let allocatedSlots = 0
   for (const poolId of poolOrder) {
-    for (const server of servers.filter((s) => s.poolId === poolId)) {
-      if (server.gpus.every((g) => g.state === 'idle')) {
-        picked.push(server)
-        if (picked.length >= needed) break
-      }
+    const idleNodes = servers
+      .filter((s) => s.poolId === poolId && s.gpus.every((g) => g.state === 'idle'))
+      .sort((a, b) => nodeScore(b) - nodeScore(a) || b.gpus.length - a.gpus.length)
+    for (const server of idleNodes) {
+      picked.push(server)
+      allocatedSlots += server.gpus.length
+      if (allocatedSlots >= count) break
     }
-    if (picked.length >= needed) break
+    if (allocatedSlots >= count) break
   }
 
-  // If not enough fully idle, force-clear remaining from least-busy
-  if (picked.length < needed) {
+  if (allocatedSlots < count) {
     const rest = servers
       .filter((s) => !picked.includes(s))
-      .sort((a, b) => a.gpus.filter((g) => g.state !== 'idle').length - b.gpus.filter((g) => g.state !== 'idle').length)
-    while (picked.length < needed && rest.length) {
+      .sort(
+        (a, b) =>
+          nodeScore(b) - nodeScore(a) ||
+          a.gpus.filter((g) => g.state !== 'idle').length - b.gpus.filter((g) => g.state !== 'idle').length,
+      )
+    while (allocatedSlots < count && rest.length) {
       const s = rest.shift()!
       s.gpus.forEach((g) => {
         g.state = 'idle'
@@ -458,13 +542,14 @@ function allocateGpus(
         g.utilization = 3
       })
       picked.push(s)
+      allocatedSlots += s.gpus.length
     }
   }
 
-  picked.slice(0, needed).forEach((server) => {
-    const cap = gpuSpec(server.gpuModel).memoryGb
+  picked.forEach((server) => {
     server.gpus.forEach((g) => {
       const util = 82 + Math.round(Math.random() * 14)
+      const cap = gpuSpec(g.cardModel).memoryGb
       applyGpuLoad(g, server, 'gang', model, workloadId, Math.round(cap * (0.7 + Math.random() * 0.22)), util)
     })
     refreshServerPower(server)
@@ -472,7 +557,7 @@ function allocateGpus(
       poolId: server.poolId,
       serverId: server.id,
       hostname: server.hostname,
-      gpuIndices: [0, 1, 2, 3, 4, 5, 6, 7],
+      gpuIndices: server.gpus.map((g) => g.index),
     })
   })
 
@@ -630,6 +715,18 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
     createdBy?: string
   }> = [
     {
+      name: 'inf-minimax-h3-prod',
+      model: 'MiniMax-H3',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 44,
+      tokensPerSec: 92,
+      durationSec: 11200,
+      preferredPool: 'pool-east-01',
+    },
+    {
       name: 'inf-qwen7b-chat-prod',
       model: 'Qwen-7B-Chat',
       type: 'Inference',
@@ -664,6 +761,18 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       tokensPerSec: 42,
       durationSec: 15300,
       preferredPool: 'pool-east-01',
+    },
+    {
+      name: 'inf-deepseek-v4-pp',
+      model: 'DeepSeek-V4',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'pp',
+      gpuCount: 16,
+      latencyMs: 148,
+      tokensPerSec: 36,
+      durationSec: 8600,
+      preferredPool: 'pool-core-03',
     },
     {
       name: 'inf-deepseek-v3-pp',
@@ -726,6 +835,18 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       durationSec: 9800,
       preferredPool: 'pool-east-02',
     },
+    {
+      name: 'inf-glm4-9b',
+      model: 'GLM-4-9B',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'single',
+      gpuCount: 1,
+      latencyMs: 41,
+      tokensPerSec: 78,
+      durationSec: 6400,
+      preferredPool: 'pool-east-02',
+    },
   ]
 
   return defs.map((d, i) => {
@@ -754,7 +875,7 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
 
 export function computeMetrics(servers: ServerNode[], workloads: Workload[], stations: PowerStation[]): ClusterMetrics {
   const busy = servers.reduce((n, s) => n + s.gpus.filter((g) => g.state !== 'idle' && g.state !== 'fault').length, 0)
-  const total = servers.length * 8
+  const total = servers.reduce((n, s) => n + s.gpus.length, 0) || 1
   const greenPowerMw = stations.reduce((n, s) => n + s.currentMw, 0)
   const capacity = stations.reduce((n, s) => n + s.capacityMw, 0)
   return {
@@ -788,7 +909,7 @@ export function createInitialState(): AppState {
       actor: 'scheduler',
       action: 'Gang 调度锁定',
       target: 'inf-deepseek-v3-pp',
-      detail: '跨 Pool-East-01 / Pool-Core-03 锁定 4×8 卡整机',
+      detail: '跨 Pool-East-01 / Pool-Core-03 锁定多台整机卡槽',
       level: 'info',
     },
     {
@@ -891,8 +1012,10 @@ export function spawnWorkload(
       tokensPerSec: type === 'Inference' ? 78 + Math.round(Math.random() * 20) : 0,
     },
     tp4: {
-      name: custom?.name ?? `${type === 'Training' ? 'train' : 'inf'}-llama70b-tp-${wlSeq}`,
-      model: custom?.model ?? 'Llama-3-70B-Instruct',
+      name:
+        custom?.name ??
+        `${type === 'Training' ? 'train' : 'inf'}-${(custom?.model ?? 'MiniMax-H3').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-tp-${wlSeq}`,
+      model: custom?.model ?? 'MiniMax-H3',
       strategy: 'tp' as ScheduleStrategy,
       gpuCount: custom?.gpuCount ?? 4,
       projectId: custom?.projectId ?? 'proj-llm',
@@ -900,10 +1023,10 @@ export function spawnWorkload(
       tokensPerSec: type === 'Inference' ? 38 + Math.round(Math.random() * 12) : 0,
     },
     gang: {
-      name: custom?.name ?? `inf-deepseek-v3-gang-${wlSeq}`,
-      model: custom?.model ?? 'DeepSeek-V3-671B',
+      name: custom?.name ?? `inf-deepseek-v4-gang-${wlSeq}`,
+      model: custom?.model ?? 'DeepSeek-V4',
       strategy: 'pp' as ScheduleStrategy,
-      gpuCount: custom?.gpuCount ?? 32,
+      gpuCount: custom?.gpuCount ?? 16,
       projectId: custom?.projectId ?? 'proj-llm',
       latencyMs: 170 + Math.round(Math.random() * 40),
       tokensPerSec: 24 + Math.round(Math.random() * 10),
@@ -988,7 +1111,7 @@ export function stopWorkload(state: AppState, workloadId: string): AppState {
         memoryUsedGb: 2,
         utilization: 3,
         temperature: 36 + Math.round(Math.random() * 6),
-        powerW: gpuSpec(s.gpuModel).idleW - 10 + Math.round(Math.random() * 25),
+        powerW: gpuSpec(g.cardModel).idleW - 10 + Math.round(Math.random() * 25),
       }
     }),
   }))

@@ -55,7 +55,7 @@ export function WorstFirstTable({
           key: `${server.id}-${gpu.index}`,
           hostname: displayHostname(server.hostname),
           slot: gpu.index,
-          model: 'NVIDIA H100 80GB HBM3',
+          model: gpu.cardModel || server.gpuModel,
           workload: (gpu.workloadId && byId.get(gpu.workloadId)) || gpu.modelName || '—',
           memUsed,
           memTotal: gpu.memoryTotalGb,

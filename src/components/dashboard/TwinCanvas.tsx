@@ -103,7 +103,7 @@ export function TwinCanvas() {
   const updateZoomLabel = (scale: number) => {
     if (scale < 0.4) setZoomLabel('宏观 · 节点池')
     else if (scale < 0.75) setZoomLabel('中观 · 50台矩阵')
-    else setZoomLabel('微观 · 8卡透视')
+    else setZoomLabel('微观 · 节点透视')
   }
 
   useEffect(() => {
@@ -369,6 +369,7 @@ export function TwinCanvas() {
           y: sy + 14,
           title: `${server.hostname} · GPU ${gi}`,
           lines: [
+            gpu.cardModel,
             gpu.modelName ?? '空闲待机',
             `显存 ${gpu.memoryUsedGb}GB / ${gpu.memoryTotalGb}GB`,
             `利用率 ${gpu.utilization}% · ${gpu.temperature}°C · ${gpu.powerW}W`,
@@ -379,7 +380,13 @@ export function TwinCanvas() {
           x: sx + 14,
           y: sy + 14,
           title: server.hostname,
-          lines: [server.ip, server.gpuModel, `功耗 ${server.powerW}W · NVLink ${server.nvlinkStatus}`],
+          lines: [
+            server.ip,
+            `${server.gpuModel} · ${server.gpus.length} 槽`,
+            `功耗 ${server.powerW >= 1000 ? `${(server.powerW / 1000).toFixed(1)} kW` : `${server.powerW} W`} · 状态 ${
+              server.nvlinkStatus === 'healthy' ? '健康' : server.nvlinkStatus === 'degraded' ? '降级' : '离线'
+            }`,
+          ],
         })
       }
     } else {
@@ -430,7 +437,7 @@ export function TwinCanvas() {
           [
             ['macro', '全局宏观'],
             ['meso', '50台节点矩阵'],
-            ['micro', '单机8卡透视'],
+            ['micro', '单机透视'],
           ] as const
         ).map(([preset, label]) => (
           <button

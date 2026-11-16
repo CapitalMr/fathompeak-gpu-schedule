@@ -295,7 +295,7 @@ export function ClusterStatsPanel() {
 
           <div className="mb-3 grid grid-cols-3 gap-2">
             <MiniStat label="机器" value={stats.servers.length} hint="台服务器" />
-            <MiniStat label="GPU 卡" value={stats.gpus.length} hint="张 H100" tone="text-infer" />
+            <MiniStat label="GPU 卡" value={stats.gpus.length} hint="张加速卡" tone="text-infer" />
             <MiniStat
               label="占用率"
               value={`${pct(stats.busy, stats.gpus.length)}%`}
