@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EChartsOption } from 'echarts'
 import { formatDuration, strategyLabel } from '../../mock/engine'
-import { QUEUE } from '../../mock/queue'
 import { useApp } from '../../store/AppContext'
 import type { ServerNode, Workload } from '../../types'
+import { FilterSelect } from '../console/ui'
 import { ScheduleFlowOverlay } from '../flow/ScheduleFlowOverlay'
 import { clamp, displayHostname } from '../grafana/format'
 import { categoryAxis, clockLabel, useEChart, valueAxis } from '../grafana/useEChart'
-
-export { QUEUE }
 
 const COLORS = ['#73BF69', '#F2CC0C', '#FF9830', '#8AB8FF', '#B877D9', '#5794F2', '#FADE2A', '#FF780A']
 
@@ -181,8 +179,7 @@ export function TaskBoard({
 }) {
   const [filter, setFilter] = useState<'all' | 'Running' | 'Pending'>('all')
   const rows = useMemo(() => {
-    const merged = [...workloads, ...QUEUE]
-    return merged
+    return workloads
       .filter((workload) => workload.status === 'Running' || workload.status === 'Pending')
       .filter((workload) => (filter === 'all' ? true : workload.status === filter))
       .sort((a, b) => Number(b.status === 'Running') - Number(a.status === 'Running') || b.gpuCount - a.gpuCount)
@@ -192,26 +189,17 @@ export function TaskBoard({
     <section className="rounded-[14px] border border-border bg-panel shadow-[0_2px_10px_rgba(33,32,33,0.04)]">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <h3 className="font-sans text-[13px] font-medium text-text">正在执行 / 排队任务</h3>
-        <div className="flex gap-1">
-          {(
-            [
-              ['all', '全部'],
-              ['Running', '运行中'],
-              ['Pending', '排队中'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              className={`rounded-[8px] px-2 py-1 text-[11px] ${
-                filter === id ? 'bg-[rgba(47,99,184,0.12)] text-infer' : 'text-dim hover:text-text'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <FilterSelect
+          size="sm"
+          label="状态"
+          value={filter}
+          onChange={(value) => setFilter(value as typeof filter)}
+          options={[
+            { value: 'all', label: '全部' },
+            { value: 'Running', label: '运行中' },
+            { value: 'Pending', label: '排队中' },
+          ]}
+        />
       </header>
       <div className="overflow-auto">
         <table className="w-full min-w-[860px] text-left text-[12px]">

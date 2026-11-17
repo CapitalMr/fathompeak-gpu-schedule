@@ -407,6 +407,7 @@ export function isMixedLayout(layout: ChassisLayout) {
 /** 模型 → 优先卡型（主流开源模型 × 可跑通卡型） */
 export const MODEL_GPU_AFFINITY: Record<string, SkuKind[]> = {
   'DeepSeek-V3-671B': ['ascend910c', 'ascend910b', 'h200'],
+  'DeepSeek-V3-671B-AWQ': ['ascend910c', 'ascend910b', 'h200'],
   'DeepSeek-R1': ['h200', 'h100', 'ascend910c'],
   'DeepSeek-V3-SFT': ['ascend910c', 'ascend910b', 'h200'],
   'Qwen2.5-72B': ['h100', 'h200', 'h20'],

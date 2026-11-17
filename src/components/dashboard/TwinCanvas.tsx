@@ -79,14 +79,14 @@ export function TwinCanvas() {
         view.offsetY = 40
       } else if (preset === 'meso') {
         view.scale = 0.58
-        const pool = state.pools.find((p) => p.id === (poolId ?? state.focusPoolId ?? 'pool-east-01'))
+        const pool = state.pools.find((p) => p.id === (poolId ?? state.focusPoolId ?? 'pool-daxing'))
         view.offsetX = 200 - (pool?.x ?? 180) * view.scale
         view.offsetY = 80 - (pool?.y ?? 280) * view.scale + 40
       } else {
         view.scale = 1.35
         const server =
           state.servers.find((s) => s.id === (serverId ?? state.focusServerId)) ??
-          state.servers.find((s) => s.poolId === (poolId ?? state.focusPoolId ?? 'pool-east-01')) ??
+          state.servers.find((s) => s.poolId === (poolId ?? state.focusPoolId ?? 'pool-daxing')) ??
           state.servers[0]
         const pool = state.pools.find((p) => p.id === server.poolId)!
         const sx = pool.x - 180 + server.rackCol * 42
@@ -102,7 +102,7 @@ export function TwinCanvas() {
 
   const updateZoomLabel = (scale: number) => {
     if (scale < 0.4) setZoomLabel('宏观 · 节点池')
-    else if (scale < 0.75) setZoomLabel('中观 · 50台矩阵')
+    else if (scale < 0.75) setZoomLabel('中观 · 节点矩阵')
     else setZoomLabel('微观 · 节点透视')
   }
 
@@ -437,7 +437,7 @@ export function TwinCanvas() {
         {(
           [
             ['macro', '全局宏观'],
-            ['meso', '50台节点矩阵'],
+            ['meso', '节点矩阵'],
             ['micro', '单机透视'],
           ] as const
         ).map(([preset, label]) => (

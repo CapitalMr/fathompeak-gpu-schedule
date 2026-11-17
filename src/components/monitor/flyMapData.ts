@@ -38,7 +38,7 @@ function pt(lon: number, lat: number) {
 const hub = pt(113.65, 34.76)
 export const FLY_HUB = { x: hub.x, y: hub.y }
 
-const xj = pt(87.6, 43.8)
+const xj = pt(93.5, 42.8)
 const bjdx = pt(116.34, 39.73)
 const tj = pt(117.2, 39.08)
 const hbsz = pt(115.55, 37.99)
@@ -49,7 +49,7 @@ const gd = pt(116.68, 23.35)
 export const FLY_MARKS: RegionMark[] = [
   {
     id: 'st-xj',
-    pill: '新疆集中式光伏',
+    pill: '哈密园区光伏',
     short: '新疆',
     x: xj.x,
     y: xj.y,

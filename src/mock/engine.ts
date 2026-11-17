@@ -25,8 +25,11 @@ import {
   preferredSkusForModel,
   resolveSkuKind,
   summarizeCardModels,
+  type ChassisLayout,
   type SkuKind,
 } from '../components/monitor/gpuSpecs'
+import { CLUSTERS, DEPARTMENTS, POOL_SOURCES, clusterOfServer } from '../platform/model'
+import { seedQueuedWorkloads } from './queue'
 
 const USER = 'wangxiaoliang@fathompeak.cn'
 
@@ -53,143 +56,217 @@ function affinityScore(cardModel: string, preferred: SkuKind[]) {
   return 0
 }
 
+/**
+ * 电站容量为「园区绿电接入配额」（可专供本智算节点池），而非上游风电场/光伏场总装机。
+ * 量级对齐约 150 机 / ~0.5–0.8 MW IT 负荷 + PUE 冗余，并保留日内调度空间。
+ */
 export const STATIONS: PowerStation[] = [
   {
     id: 'st-bjdx',
-    name: '北京大兴区分布式光伏电站',
+    name: '北京大兴园区分布式光伏',
     type: '分布式光伏',
     region: '北京大兴',
-    capacityMw: 48.5,
-    currentMw: 31.2,
-    greenRatio: 0.94,
+    capacityMw: 4.8,
+    currentMw: 3.2,
+    greenRatio: 0.91,
   },
   {
     id: 'st-hbsz',
-    name: '河北深州集中式光伏电站',
+    name: '河北深州园区集中式光伏',
     type: '集中式光伏',
     region: '河北深州',
-    capacityMw: 120,
-    currentMw: 86.4,
-    greenRatio: 0.97,
+    capacityMw: 8.5,
+    currentMw: 6.1,
+    greenRatio: 0.94,
   },
   {
     id: 'st-xj',
-    name: '新疆集中式光伏电站',
+    name: '新疆哈密园区集中式光伏',
     type: '集中式光伏',
     region: '新疆哈密',
-    capacityMw: 200,
-    currentMw: 148.6,
-    greenRatio: 0.98,
+    capacityMw: 12.0,
+    currentMw: 8.9,
+    greenRatio: 0.96,
   },
   {
     id: 'st-tj',
-    name: '天津分布式光伏电站',
+    name: '天津滨海园区分布式光伏',
     type: '分布式光伏',
     region: '天津滨海',
-    capacityMw: 36,
-    currentMw: 22.8,
-    greenRatio: 0.93,
+    capacityMw: 3.6,
+    currentMw: 2.3,
+    greenRatio: 0.88,
   },
   {
     id: 'st-gd',
-    name: '广东汕头海上风电电站',
+    name: '广东汕头园区海上风电接入',
     type: '海上风电',
     region: '广东汕头',
-    capacityMw: 300,
-    currentMw: 186.5,
-    greenRatio: 0.99,
+    capacityMw: 15.0,
+    currentMw: 9.3,
+    greenRatio: 0.97,
   },
   {
     id: 'st-jx',
-    name: '江西水电电站',
+    name: '江西赣州园区水电接入',
     type: '水电',
     region: '江西赣州',
-    capacityMw: 180,
-    currentMw: 142.0,
-    greenRatio: 1.0,
+    capacityMw: 10.0,
+    currentMw: 7.9,
+    greenRatio: 0.99,
   },
   {
     id: 'st-jsgp',
-    name: '江苏高邮集中式光伏电站',
+    name: '江苏高邮园区集中式光伏',
     type: '集中式光伏',
     region: '江苏高邮',
-    capacityMw: 95,
-    currentMw: 61.7,
-    greenRatio: 0.96,
+    capacityMw: 6.5,
+    currentMw: 4.2,
+    greenRatio: 0.92,
   },
 ]
 
 export const POOLS: NodePool[] = [
   {
-    id: 'pool-east-01',
-    name: 'Pool-East-01',
-    label: 'Pool-East-01 [50台]',
-    serverCount: 50,
-    region: '华北智算中心 · 大兴园区',
-    stationIds: ['st-bjdx', 'st-tj'],
-    x: 220,
+    id: 'pool-daxing',
+    name: 'Pool-大兴',
+    label: 'Pool-大兴 [22台]',
+    serverCount: 22,
+    region: '北京大兴',
+    stationIds: ['st-bjdx'],
+    x: 180,
+    y: 200,
+  },
+  {
+    id: 'pool-tianjin',
+    name: 'Pool-滨海',
+    label: 'Pool-滨海 [21台]',
+    serverCount: 21,
+    region: '天津滨海',
+    stationIds: ['st-tj'],
+    x: 320,
+    y: 180,
+  },
+  {
+    id: 'pool-shenzhou',
+    name: 'Pool-深州',
+    label: 'Pool-深州 [22台]',
+    serverCount: 22,
+    region: '河北深州',
+    stationIds: ['st-hbsz'],
+    x: 460,
+    y: 220,
+  },
+  {
+    id: 'pool-gaoyou',
+    name: 'Pool-高邮',
+    label: 'Pool-高邮 [21台]',
+    serverCount: 21,
+    region: '江苏高邮',
+    stationIds: ['st-jsgp'],
+    x: 620,
     y: 260,
   },
   {
-    id: 'pool-east-02',
-    name: 'Pool-East-02',
-    label: 'Pool-East-02 [50台]',
-    serverCount: 50,
-    region: '华北智算中心 · 深州园区',
-    stationIds: ['st-hbsz', 'st-jsgp'],
-    x: 720,
-    y: 260,
+    id: 'pool-hami',
+    name: 'Pool-哈密',
+    label: 'Pool-哈密 [22台]',
+    serverCount: 22,
+    region: '新疆哈密',
+    stationIds: ['st-xj'],
+    x: 200,
+    y: 480,
   },
   {
-    id: 'pool-core-03',
-    name: 'Pool-Core-03',
-    label: 'Pool-Core-03 [50台]',
-    serverCount: 50,
-    region: '西部核心智算中心 · 哈密/赣州联动',
-    stationIds: ['st-xj', 'st-gd', 'st-jx'],
-    x: 470,
-    y: 580,
+    id: 'pool-shantou',
+    name: 'Pool-汕头',
+    label: 'Pool-汕头 [21台]',
+    serverCount: 21,
+    region: '广东汕头',
+    stationIds: ['st-gd'],
+    x: 520,
+    y: 520,
+  },
+  {
+    id: 'pool-ganzhou',
+    name: 'Pool-赣州',
+    label: 'Pool-赣州 [21台]',
+    serverCount: 21,
+    region: '江西赣州',
+    stationIds: ['st-jx'],
+    x: 700,
+    y: 460,
   },
 ]
 
 export const PROJECTS: ProjectQuota[] = [
   {
     id: 'proj-llm',
-    name: '大语言模型研发部',
+    name: 'LLM 预训练平台',
     department: '基础模型事业部',
-    guaranteed: 256,
-    overQuota: 384,
-    used: 198,
+    guaranteed: 192,
+    overQuota: 256,
+    used: 0,
     priority: 1,
     preemptible: false,
   },
   {
+    id: 'proj-llm-align',
+    name: 'LLM 对齐与评测',
+    department: '基础模型事业部',
+    guaranteed: 64,
+    overQuota: 96,
+    used: 0,
+    priority: 2,
+    preemptible: true,
+  },
+  {
     id: 'proj-mm',
-    name: '多模态视觉组',
+    name: '多模态视觉训练',
     department: '感知智能事业部',
-    guaranteed: 128,
-    overQuota: 192,
-    used: 96,
+    guaranteed: 96,
+    overQuota: 128,
+    used: 0,
+    priority: 2,
+    preemptible: true,
+  },
+  {
+    id: 'proj-mm-serve',
+    name: '视觉推理服务',
+    department: '感知智能事业部',
+    guaranteed: 48,
+    overQuota: 64,
+    used: 0,
     priority: 2,
     preemptible: true,
   },
   {
     id: 'proj-agent',
-    name: '智能体推理平台组',
+    name: 'Agent Serving',
     department: '应用智能事业部',
-    guaranteed: 96,
-    overQuota: 160,
-    used: 72,
+    guaranteed: 64,
+    overQuota: 96,
+    used: 0,
     priority: 2,
     preemptible: true,
   },
   {
+    id: 'proj-embed',
+    name: 'Embedding 检索',
+    department: '应用智能事业部',
+    guaranteed: 32,
+    overQuota: 48,
+    used: 0,
+    priority: 3,
+    preemptible: true,
+  },
+  {
     id: 'proj-energy',
-    name: '算电协同调度组',
+    name: '算电协同调度',
     department: '基础设施事业部',
-    guaranteed: 64,
-    overQuota: 96,
-    used: 41,
+    guaranteed: 48,
+    overQuota: 64,
+    used: 0,
     priority: 3,
     preemptible: true,
   },
@@ -197,13 +274,33 @@ export const PROJECTS: ProjectQuota[] = [
     id: 'proj-rd',
     name: '算法预研专项',
     department: '研究院',
-    guaranteed: 48,
-    overQuota: 80,
-    used: 28,
+    guaranteed: 32,
+    overQuota: 48,
+    used: 0,
+    priority: 4,
+    preemptible: true,
+  },
+  {
+    id: 'proj-oss',
+    name: '开源模型复现',
+    department: '研究院',
+    guaranteed: 16,
+    overQuota: 32,
+    used: 0,
     priority: 4,
     preemptible: true,
   },
 ]
+
+const POOL_HOST_PREFIX: Record<string, string> = {
+  'pool-daxing': 'bjdx',
+  'pool-tianjin': 'tjbh',
+  'pool-shenzhou': 'hbsz',
+  'pool-gaoyou': 'jsgp',
+  'pool-hami': 'xjhm',
+  'pool-shantou': 'gdst',
+  'pool-ganzhou': 'jxgz',
+}
 
 export const POLICIES: PolicyFlag[] = [
   {
@@ -228,7 +325,7 @@ export const POLICIES: PolicyFlag[] = [
     id: 'pol-mig',
     name: 'GPU 显存切分隔离',
     description: '允许按卡型亲和与显存配额切分，保障多租户任务隔离',
-    enabled: false,
+    enabled: true,
   },
   {
     id: 'pol-green',
@@ -249,12 +346,29 @@ function seeded(n: number) {
   return x - Math.floor(x)
 }
 
+function layoutsOfSize(layouts: ChassisLayout[], size: number) {
+  return layouts.filter((layout) => layout.reduce((n, part) => n + part.count, 0) === size)
+}
+
+function pickFrom(layouts: ChassisLayout[], seed: number) {
+  if (!layouts.length) return HOMOGENEOUS_LAYOUTS[0]
+  const idx = Math.floor(seeded(seed) * layouts.length)
+  return layouts[Math.min(idx, layouts.length - 1)]
+}
+
+/**
+ * 机箱布局权重贴近私有化智算机房：以 8 卡 HGX/Atlas 为主，
+ * 少量 4 卡工作站与 16 卡大机柜，极少数 32 卡；混卡约 8%。
+ * 目标全舰队约 1100–1300 GPU（150 机）。
+ */
 function pickChassisLayout(seed: number) {
-  // 约 1/3 节点为合理混卡，保证清单里能稳定看到「同节点多型号」
-  const useMixed = seeded(seed + 41) < 0.34
-  const pool = useMixed ? MIXED_LAYOUTS : HOMOGENEOUS_LAYOUTS
-  const idx = Math.floor(seeded(seed + 73) * pool.length)
-  return pool[Math.min(idx, pool.length - 1)]
+  const roll = seeded(seed + 41)
+  if (roll < 0.72) return pickFrom(layoutsOfSize(HOMOGENEOUS_LAYOUTS, 8), seed + 73)
+  if (roll < 0.84) return pickFrom(layoutsOfSize(HOMOGENEOUS_LAYOUTS, 4), seed + 73)
+  if (roll < 0.92) return pickFrom(layoutsOfSize(HOMOGENEOUS_LAYOUTS, 16), seed + 73)
+  if (roll < 0.95) return pickFrom(layoutsOfSize(HOMOGENEOUS_LAYOUTS, 32), seed + 73)
+  const mixed8 = MIXED_LAYOUTS.filter((layout) => layout.reduce((n, part) => n + part.count, 0) === 8)
+  return pickFrom(mixed8.length ? mixed8 : MIXED_LAYOUTS, seed + 73)
 }
 
 function makeGpu(index: number, seed: number, cardModel: string): GpuSlot {
@@ -283,11 +397,13 @@ export function buildServers(): ServerNode[] {
   let globalIdx = 0
 
   POOLS.forEach((pool, poolIdx) => {
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < pool.serverCount; i++) {
       const row = Math.floor(i / 10)
       const col = i % 10
       const id = `node-${String(globalIdx + 1).padStart(3, '0')}`
-      const hostname = `${pool.name.toLowerCase().replace(/_/g, '-')}-n${String(i + 1).padStart(2, '0')}`
+      const hostPrefix = POOL_HOST_PREFIX[pool.id] ?? `pool${poolIdx}`
+      const hostname = `${hostPrefix}-gpu-n${String(i + 1).padStart(2, '0')}`
+      // 业务平面 10.4x；行号映射机柜，列号映射 U 位
       const ip = `10.${40 + poolIdx}.${row + 1}.${col + 10}`
       const seed = globalIdx * 97 + poolIdx * 13
       const layout = pickChassisLayout(seed)
@@ -467,23 +583,30 @@ function allocateGpus(
   const nodeFabric = (s: ServerNode) => GPU_SPECS[resolveSkuKind(s.gpus[0]?.cardModel ?? 'h100')].fabricName
   const preferredVendors = new Set(preferred.map((k) => GPU_SPECS[k].vendor))
 
-  const idleCandidates = poolOrder
-    .flatMap((poolId) =>
-      servers.filter(
-        (s) =>
-          s.poolId === poolId &&
-          s.gpus.every((g) => g.state === 'idle') &&
-          (preferredVendors.size === 0 || preferredVendors.has(nodeVendor(s))),
-      ),
-    )
-    .sort((a, b) => nodeScore(b) - nodeScore(a) || b.gpus.length - a.gpus.length)
+  const idleCandidates = poolOrder.flatMap((poolId) =>
+    servers.filter(
+      (s) =>
+        s.poolId === poolId &&
+        s.gpus.every((g) => g.state === 'idle') &&
+        (preferredVendors.size === 0 || preferredVendors.has(nodeVendor(s))),
+    ),
+  )
 
-  const seed = idleCandidates[0]
+  const seed = [...idleCandidates].sort(
+    (a, b) =>
+      poolOrder.indexOf(a.poolId) - poolOrder.indexOf(b.poolId) ||
+      nodeScore(b) - nodeScore(a) ||
+      a.gpus.length - b.gpus.length,
+  )[0]
   if (!seed) return allocations
 
   const vendor = nodeVendor(seed)
   const fabric = nodeFabric(seed)
-  const pool = idleCandidates.filter((s) => nodeVendor(s) === vendor && nodeFabric(s) === fabric)
+  // 先尽量在首选池内成组，再允许邻近池溢出，避免「全国乱跳」
+  const sameFabric = idleCandidates.filter((s) => nodeVendor(s) === vendor && nodeFabric(s) === fabric)
+  const homePool = sameFabric.filter((s) => s.poolId === seed.poolId)
+  const spillPools = sameFabric.filter((s) => s.poolId !== seed.poolId)
+  const pool = [...homePool, ...spillPools]
   const picked: ServerNode[] = []
   let allocatedSlots = 0
   const used = new Set<string>()
@@ -493,20 +616,23 @@ function allocateGpus(
     const next = pool
       .filter((s) => !used.has(s.id))
       .sort((a, b) => {
+        const homeRank = (s: ServerNode) => (s.poolId === seed.poolId ? 0 : 1)
+        if (homeRank(a) !== homeRank(b)) return homeRank(a) - homeRank(b)
         const aOver = a.gpus.length > remaining ? 1 : 0
         const bOver = b.gpus.length > remaining ? 1 : 0
         if (aOver !== bOver) return aOver - bOver
+        // 优先 8 卡标准机，体现跨机 PP/Gang；避免整舱 32 卡「假跨机」
+        const sizePref = (s: ServerNode) => (s.gpus.length === 8 ? 0 : s.gpus.length === 16 ? 1 : 2)
+        if (sizePref(a) !== sizePref(b)) return sizePref(a) - sizePref(b)
         if (!aOver && !bOver) {
-          // 不超配时优先更大整机，减少跨机跳数
-          return b.gpus.length - a.gpus.length || nodeScore(b) - nodeScore(a)
+          return nodeScore(b) - nodeScore(a) || a.id.localeCompare(b.id)
         }
-        // 不得不超配时选浪费最少的
         return a.gpus.length - b.gpus.length || nodeScore(b) - nodeScore(a)
       })[0]
     if (!next) break
     used.add(next.id)
     picked.push(next)
-    allocatedSlots += next.gpus.length
+    allocatedSlots += Math.min(remaining, next.gpus.length)
   }
 
   if (allocatedSlots < count) return allocations
@@ -633,10 +759,14 @@ function composeWorkload(params: {
   const image = modelImage(params.model)
   const pods = buildPods(params.name, params.strategy, params.allocations, params.servers, image)
   const gpuCount = params.allocations.reduce((n, a) => n + a.gpuIndices.length, 0)
+  // 请求规格按独占整卡显存汇总，而非瞬时 used（与资产「计算规格」口径一致）
   const memoryGb = params.allocations.reduce((n, a) => {
-    const server = params.servers.find((s) => s.id === a.serverId)!
-    return n + a.gpuIndices.reduce((m, gi) => m + server.gpus[gi].memoryUsedGb, 0)
+    const server = params.servers.find((s) => s.id === a.serverId)
+    if (!server) return n
+    return n + a.gpuIndices.reduce((m, gi) => m + (server.gpus[gi]?.memoryTotalGb ?? 0), 0)
   }, 0)
+  const primaryServer = params.servers.find((s) => s.id === params.allocations[0]?.serverId)
+  const clusterName = primaryServer ? clusterOfServer(primaryServer)?.name ?? 'cls-pending' : 'pending'
 
   return {
     id: params.id,
@@ -649,7 +779,7 @@ function composeWorkload(params: {
     status: params.status,
     createdBy: params.createdBy,
     image,
-    clusterName: 'fp-ai-factory-01',
+    clusterName,
     architecture: params.strategy === 'single' ? 'Standard' : 'Distributed',
     gpuCount,
     memoryGb,
@@ -684,32 +814,33 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
     preferredPool?: string
     createdBy?: string
   }> = [
+    // —— 华北生产推理（策略优先大兴/滨海）——
     {
-      name: 'inf-deepseek-v3-full',
-      model: 'DeepSeek-V3-671B',
+      name: 'inf-deepseek-v3-awq',
+      model: 'DeepSeek-V3-671B-AWQ',
       type: 'Inference',
       projectId: 'proj-llm',
       strategy: 'pp',
-      gpuCount: 32,
-      latencyMs: 186,
-      tokensPerSec: 28,
-      durationSec: 7200,
-      preferredPool: 'pool-core-03',
+      gpuCount: 64,
+      latencyMs: 142,
+      tokensPerSec: 36,
+      durationSec: 28600,
+      preferredPool: 'pool-daxing',
     },
     {
-      name: 'inf-deepseek-r1-full',
+      name: 'inf-deepseek-r1-prod',
       model: 'DeepSeek-R1',
       type: 'Inference',
       projectId: 'proj-llm',
       strategy: 'pp',
-      gpuCount: 16,
-      latencyMs: 164,
-      tokensPerSec: 22,
-      durationSec: 8600,
-      preferredPool: 'pool-east-01',
+      gpuCount: 32,
+      latencyMs: 168,
+      tokensPerSec: 24,
+      durationSec: 22400,
+      preferredPool: 'pool-tianjin',
     },
     {
-      name: 'inf-qwen25-72b-full',
+      name: 'inf-qwen25-72b-a',
       model: 'Qwen2.5-72B',
       type: 'Inference',
       projectId: 'proj-llm',
@@ -717,32 +848,93 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 8,
       latencyMs: 96,
       tokensPerSec: 42,
-      durationSec: 12800,
-      preferredPool: 'pool-east-01',
+      durationSec: 18800,
+      preferredPool: 'pool-daxing',
     },
     {
-      name: 'inf-qwen25-32b-full',
-      model: 'Qwen2.5-32B',
+      name: 'inf-qwen25-72b-b',
+      model: 'Qwen2.5-72B',
       type: 'Inference',
       projectId: 'proj-llm',
       strategy: 'tp',
       gpuCount: 8,
-      latencyMs: 72,
-      tokensPerSec: 58,
-      durationSec: 10400,
-      preferredPool: 'pool-core-03',
+      latencyMs: 102,
+      tokensPerSec: 40,
+      durationSec: 16200,
+      preferredPool: 'pool-tianjin',
     },
     {
-      name: 'inf-qwen25-14b-full',
-      model: 'Qwen2.5-14B',
+      name: 'inf-llama31-70b-a',
+      model: 'Llama-3.1-70B-Instruct',
       type: 'Inference',
       projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 88,
+      tokensPerSec: 46,
+      durationSec: 20100,
+      preferredPool: 'pool-daxing',
+    },
+    {
+      name: 'inf-llama31-70b-b',
+      model: 'Llama-3.1-70B-Instruct',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 91,
+      tokensPerSec: 44,
+      durationSec: 15400,
+      preferredPool: 'pool-tianjin',
+    },
+    // —— 区域溢出推理 ——
+    {
+      name: 'inf-qwen25-32b-sz',
+      model: 'Qwen2.5-32B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 72,
+      tokensPerSec: 58,
+      durationSec: 12400,
+      preferredPool: 'pool-shenzhou',
+    },
+    {
+      name: 'inf-qwen25-32b-gy',
+      model: 'Qwen2.5-32B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 74,
+      tokensPerSec: 56,
+      durationSec: 9800,
+      preferredPool: 'pool-gaoyou',
+    },
+    {
+      name: 'inf-qwen25-14b-hm',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
       strategy: 'tp',
       gpuCount: 4,
       latencyMs: 48,
       tokensPerSec: 86,
-      durationSec: 9800,
-      preferredPool: 'pool-east-02',
+      durationSec: 11200,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'inf-qwen25-14b-gz',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 46,
+      tokensPerSec: 90,
+      durationSec: 8600,
+      preferredPool: 'pool-ganzhou',
     },
     {
       name: 'inf-qwen25-7b-api',
@@ -753,23 +945,23 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 2,
       latencyMs: 32,
       tokensPerSec: 126,
-      durationSec: 14200,
-      preferredPool: 'pool-east-02',
+      durationSec: 24200,
+      preferredPool: 'pool-shantou',
     },
     {
-      name: 'inf-llama31-70b-full',
-      model: 'Llama-3.1-70B-Instruct',
+      name: 'inf-qwen25-7b-chat',
+      model: 'Qwen2.5-7B',
       type: 'Inference',
-      projectId: 'proj-llm',
+      projectId: 'proj-agent',
       strategy: 'tp',
-      gpuCount: 8,
-      latencyMs: 88,
-      tokensPerSec: 46,
-      durationSec: 15600,
-      preferredPool: 'pool-east-01',
+      gpuCount: 2,
+      latencyMs: 28,
+      tokensPerSec: 132,
+      durationSec: 19600,
+      preferredPool: 'pool-daxing',
     },
     {
-      name: 'inf-glm4-9b-full',
+      name: 'inf-glm4-9b-a',
       model: 'GLM-4-9B-Chat',
       type: 'Inference',
       projectId: 'proj-agent',
@@ -777,9 +969,22 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 4,
       latencyMs: 40,
       tokensPerSec: 92,
-      durationSec: 9100,
-      preferredPool: 'pool-east-02',
+      durationSec: 14100,
+      preferredPool: 'pool-daxing',
     },
+    {
+      name: 'inf-glm4-9b-b',
+      model: 'GLM-4-9B-Chat',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 38,
+      tokensPerSec: 96,
+      durationSec: 10200,
+      preferredPool: 'pool-tianjin',
+    },
+    // —— 多模态 ——
     {
       name: 'inf-qwen2-vl-72b',
       model: 'Qwen2-VL-72B',
@@ -789,11 +994,11 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 8,
       latencyMs: 118,
       tokensPerSec: 34,
-      durationSec: 8700,
-      preferredPool: 'pool-east-01',
+      durationSec: 16700,
+      preferredPool: 'pool-tianjin',
     },
     {
-      name: 'inf-internvl2-40b-full',
+      name: 'inf-internvl2-40b-a',
       model: 'InternVL2-40B',
       type: 'Inference',
       projectId: 'proj-mm',
@@ -801,56 +1006,106 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 8,
       latencyMs: 112,
       tokensPerSec: 36,
-      durationSec: 9400,
-      preferredPool: 'pool-east-02',
+      durationSec: 15400,
+      preferredPool: 'pool-shenzhou',
+    },
+    {
+      name: 'inf-internvl2-40b-b',
+      model: 'InternVL2-40B',
+      type: 'Inference',
+      projectId: 'proj-mm-serve',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 108,
+      tokensPerSec: 38,
+      durationSec: 12100,
+      preferredPool: 'pool-gaoyou',
     },
     {
       name: 'inf-internvl2-26b',
       model: 'InternVL2-26B',
       type: 'Inference',
-      projectId: 'proj-mm',
+      projectId: 'proj-mm-serve',
       strategy: 'tp',
       gpuCount: 4,
       latencyMs: 98,
       tokensPerSec: 44,
-      durationSec: 7600,
-      preferredPool: 'pool-core-03',
+      durationSec: 9600,
+      preferredPool: 'pool-gaoyou',
     },
     {
       name: 'inf-whisper-large-v3',
       model: 'Whisper-Large-V3',
       type: 'Inference',
-      projectId: 'proj-mm',
+      projectId: 'proj-mm-serve',
       strategy: 'tp',
       gpuCount: 2,
       latencyMs: 180,
       tokensPerSec: 0,
-      durationSec: 6200,
-      preferredPool: 'pool-core-03',
+      durationSec: 8200,
+      preferredPool: 'pool-hami',
     },
     {
-      name: 'inf-bge-m3-embed',
+      name: 'inf-bge-m3-a',
       model: 'BGE-M3',
       type: 'Inference',
-      projectId: 'proj-agent',
+      projectId: 'proj-embed',
       strategy: 'tp',
       gpuCount: 2,
       latencyMs: 14,
       tokensPerSec: 0,
-      durationSec: 16800,
-      preferredPool: 'pool-east-02',
+      durationSec: 26800,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'inf-bge-m3-b',
+      model: 'BGE-M3',
+      type: 'Inference',
+      projectId: 'proj-embed',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 12,
+      tokensPerSec: 0,
+      durationSec: 21400,
+      preferredPool: 'pool-ganzhou',
+    },
+    {
+      name: 'inf-bge-rerank',
+      model: 'BGE-M3-Rerank',
+      type: 'Inference',
+      projectId: 'proj-embed',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 18,
+      tokensPerSec: 0,
+      durationSec: 17600,
+      preferredPool: 'pool-daxing',
+    },
+    // —— 训练 / SFT ——
+    {
+      name: 'train-deepseek-v3-sft',
+      model: 'DeepSeek-V3-SFT',
+      type: 'Training',
+      projectId: 'proj-llm',
+      strategy: 'pp',
+      gpuCount: 64,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 42000,
+      preferredPool: 'pool-hami',
+      createdBy: 'chenli@fathompeak.cn',
     },
     {
       name: 'train-qwen25-14b-sft',
       model: 'Qwen2.5-14B-SFT',
       type: 'Training',
-      projectId: 'proj-llm',
+      projectId: 'proj-llm-align',
       strategy: 'tp',
       gpuCount: 8,
       latencyMs: 0,
       tokensPerSec: 0,
-      durationSec: 18600,
-      preferredPool: 'pool-core-03',
+      durationSec: 28600,
+      preferredPool: 'pool-ganzhou',
       createdBy: 'chenli@fathompeak.cn',
     },
     {
@@ -862,23 +1117,61 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       gpuCount: 8,
       latencyMs: 0,
       tokensPerSec: 0,
-      durationSec: 14200,
-      preferredPool: 'pool-east-01',
-      createdBy: 'chenli@fathompeak.cn',
+      durationSec: 18200,
+      preferredPool: 'pool-shenzhou',
+      createdBy: 'liwei@fathompeak.cn',
     },
     {
-      name: 'train-deepseek-v3-sft',
-      model: 'DeepSeek-V3-SFT',
+      name: 'train-qwen14b-lora',
+      model: 'Qwen2.5-14B-LoRA',
       type: 'Training',
-      projectId: 'proj-llm',
-      strategy: 'pp',
-      gpuCount: 32,
+      projectId: 'proj-oss',
+      strategy: 'tp',
+      gpuCount: 4,
       latencyMs: 0,
       tokensPerSec: 0,
-      durationSec: 22000,
-      preferredPool: 'pool-core-03',
-      createdBy: 'chenli@fathompeak.cn',
+      durationSec: 12400,
+      preferredPool: 'pool-gaoyou',
+      createdBy: 'liwei@fathompeak.cn',
     },
+    // —— 算电可迁移批处理 ——
+    {
+      name: 'job-green-batch-a',
+      model: 'Qwen2.5-7B',
+      type: 'Inference',
+      projectId: 'proj-energy',
+      strategy: 'single',
+      gpuCount: 1,
+      latencyMs: 36,
+      tokensPerSec: 110,
+      durationSec: 6400,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'job-green-batch-b',
+      model: 'Qwen2.5-7B',
+      type: 'Inference',
+      projectId: 'proj-energy',
+      strategy: 'single',
+      gpuCount: 1,
+      latencyMs: 34,
+      tokensPerSec: 118,
+      durationSec: 5100,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'job-green-batch-c',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-energy',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 52,
+      tokensPerSec: 78,
+      durationSec: 7200,
+      preferredPool: 'pool-ganzhou',
+    },
+    // —— 工作空间 ——
     {
       name: 'ws-llama31-8b-dev',
       model: 'Llama-3.1-8B',
@@ -889,21 +1182,264 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       latencyMs: 0,
       tokensPerSec: 0,
       durationSec: 5400,
-      preferredPool: 'pool-east-02',
+      preferredPool: 'pool-shenzhou',
       createdBy: 'liwei@fathompeak.cn',
     },
     {
       name: 'ws-vscode-multigpu',
       model: 'VSCode-MultiGPU',
       type: 'Workspace',
-      projectId: 'proj-rd',
+      projectId: 'proj-oss',
       strategy: 'tp',
       gpuCount: 4,
       latencyMs: 0,
       tokensPerSec: 0,
       durationSec: 3600,
-      preferredPool: 'pool-east-02',
+      preferredPool: 'pool-gaoyou',
       createdBy: 'liwei@fathompeak.cn',
+    },
+    // —— 额外副本，把舰队利用率抬到约 40% ——
+    {
+      name: 'inf-qwen25-72b-c',
+      model: 'Qwen2.5-72B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 99,
+      tokensPerSec: 41,
+      durationSec: 13200,
+      preferredPool: 'pool-shenzhou',
+    },
+    {
+      name: 'inf-qwen25-72b-d',
+      model: 'Qwen2.5-72B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 97,
+      tokensPerSec: 43,
+      durationSec: 11800,
+      preferredPool: 'pool-gaoyou',
+    },
+    {
+      name: 'inf-llama31-70b-c',
+      model: 'Llama-3.1-70B-Instruct',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 90,
+      tokensPerSec: 45,
+      durationSec: 14500,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'inf-llama31-70b-d',
+      model: 'Llama-3.1-70B-Instruct',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 92,
+      tokensPerSec: 44,
+      durationSec: 10900,
+      preferredPool: 'pool-ganzhou',
+    },
+    {
+      name: 'inf-qwen2-vl-72b-b',
+      model: 'Qwen2-VL-72B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 120,
+      tokensPerSec: 33,
+      durationSec: 13800,
+      preferredPool: 'pool-daxing',
+    },
+    {
+      name: 'inf-internvl2-40b-c',
+      model: 'InternVL2-40B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 115,
+      tokensPerSec: 35,
+      durationSec: 10100,
+      preferredPool: 'pool-tianjin',
+    },
+    {
+      name: 'inf-deepseek-r1-eval',
+      model: 'DeepSeek-R1',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'pp',
+      gpuCount: 16,
+      latencyMs: 170,
+      tokensPerSec: 20,
+      durationSec: 8800,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'train-internvl-ft',
+      model: 'InternVL2-26B',
+      type: 'Training',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 24600,
+      preferredPool: 'pool-hami',
+      createdBy: 'chenli@fathompeak.cn',
+    },
+    {
+      name: 'inf-qwen25-32b-st',
+      model: 'Qwen2.5-32B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 70,
+      tokensPerSec: 60,
+      durationSec: 9200,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'inf-qwen25-32b-hm',
+      model: 'Qwen2.5-32B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 71,
+      tokensPerSec: 59,
+      durationSec: 8700,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'inf-llama31-70b-e',
+      model: 'Llama-3.1-70B-Instruct',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 89,
+      tokensPerSec: 47,
+      durationSec: 11300,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'inf-qwen25-72b-e',
+      model: 'Qwen2.5-72B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 95,
+      tokensPerSec: 42,
+      durationSec: 10500,
+      preferredPool: 'pool-ganzhou',
+    },
+    {
+      name: 'inf-internvl2-40b-d',
+      model: 'InternVL2-40B',
+      type: 'Inference',
+      projectId: 'proj-mm-serve',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 110,
+      tokensPerSec: 37,
+      durationSec: 9400,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'inf-qwen2-vl-72b-c',
+      model: 'Qwen2-VL-72B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 116,
+      tokensPerSec: 35,
+      durationSec: 8900,
+      preferredPool: 'pool-shenzhou',
+    },
+    {
+      name: 'inf-glm4-9b-c',
+      model: 'GLM-4-9B-Chat',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 39,
+      tokensPerSec: 94,
+      durationSec: 7800,
+      preferredPool: 'pool-gaoyou',
+    },
+    {
+      name: 'inf-glm4-9b-d',
+      model: 'GLM-4-9B-Chat',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 41,
+      tokensPerSec: 90,
+      durationSec: 7200,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'train-qwen72b-lora',
+      model: 'Qwen2.5-72B',
+      type: 'Training',
+      projectId: 'proj-rd',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 16800,
+      preferredPool: 'pool-tianjin',
+      createdBy: 'liwei@fathompeak.cn',
+    },
+    {
+      name: 'job-green-batch-d',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-energy',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 50,
+      tokensPerSec: 80,
+      durationSec: 5600,
+      preferredPool: 'pool-hami',
+    },
+    {
+      name: 'inf-qwen25-14b-st',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-llm-align',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 47,
+      tokensPerSec: 88,
+      durationSec: 6900,
+      preferredPool: 'pool-shantou',
+    },
+    {
+      name: 'inf-bge-m3-c',
+      model: 'BGE-M3',
+      type: 'Inference',
+      projectId: 'proj-embed',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 13,
+      tokensPerSec: 0,
+      durationSec: 15200,
+      preferredPool: 'pool-tianjin',
     },
   ]
 
@@ -935,7 +1471,9 @@ export function computeMetrics(servers: ServerNode[], workloads: Workload[], sta
   const busy = servers.reduce((n, s) => n + s.gpus.filter((g) => g.state !== 'idle' && g.state !== 'fault').length, 0)
   const total = servers.reduce((n, s) => n + s.gpus.length, 0) || 1
   const greenPowerMw = stations.reduce((n, s) => n + s.currentMw, 0)
-  const capacity = stations.reduce((n, s) => n + s.capacityMw, 0)
+  // greenRatio：出力加权绿电占比，量纲 0–1（与电站 greenRatio 一致）
+  const greenWeighted =
+    stations.reduce((n, s) => n + s.currentMw * s.greenRatio, 0) / Math.max(greenPowerMw, 0.001)
   return {
     poolCount: POOLS.length,
     serverCount: servers.length,
@@ -943,92 +1481,142 @@ export function computeMetrics(servers: ServerNode[], workloads: Workload[], sta
     utilization: Math.round((busy / total) * 1000) / 10,
     runningTasks: workloads.filter((w) => w.status === 'Running').length,
     greenPowerMw: Math.round(greenPowerMw * 10) / 10,
-    greenRatio: Math.round((greenPowerMw / capacity) * 1000) / 10,
+    greenRatio: Math.round(greenWeighted * 1000) / 1000,
   }
 }
 
-export function createInitialState(): AppState {
-  const servers = buildServers()
-  const workloads = seedInitialWorkloads(servers)
-  syncWorkloadLinks(servers, workloads)
+function injectDemoAnomalies(servers: ServerNode[]) {
+  const loaded = servers
+    .filter((s) => s.gpus.some((g) => g.state !== 'idle' && g.state !== 'fault'))
+    .sort((a, b) => b.powerW - a.powerW)
+  loaded.slice(0, 3).forEach((server, index) => {
+    server.gpus.forEach((gpu) => {
+      if (gpu.state === 'idle' || gpu.state === 'fault') return
+      gpu.temperature = Math.min(92, 83 + index + Math.round(seeded(index * 17 + gpu.index) * 4))
+      gpu.powerW = Math.min(gpuSpec(gpu.cardModel).tdpW, Math.round(gpu.powerW * 1.08))
+    })
+    refreshServerPower(server)
+    // 机箱平均温度抬到告警阈值以上，便于演示高温路径
+    server.temperature = Math.max(server.temperature, 83 + index)
+  })
+}
+
+function buildSeedAudits(workloads: Workload[]): AuditEvent[] {
+  const now = Date.now()
+  const pp = workloads.find((w) => w.strategy === 'pp' && w.allocations.length > 1)
+  const single = workloads.find((w) => w.strategy === 'single' || (w.strategy === 'tp' && w.gpuCount <= 2))
+  const tp = workloads.find((w) => w.strategy === 'tp' && w.gpuCount >= 4)
   const audits: AuditEvent[] = [
     {
       id: 'aud-001',
-      ts: Date.now() - 3600_000,
+      ts: now - 3600_000,
       actor: USER,
       action: '登录系统',
       target: 'Auth Gateway',
       detail: '集群超级管理员会话建立',
       level: 'success',
     },
-    {
+  ]
+  if (pp) {
+    const pools = [...new Set(pp.allocations.map((a) => POOLS.find((p) => p.id === a.poolId)?.name ?? a.poolId))]
+    audits.push({
       id: 'aud-002',
-      ts: Date.now() - 3200_000,
+      ts: now - 3200_000,
       actor: 'scheduler',
       action: 'Gang 调度锁定',
-      target: 'inf-deepseek-v3-pp',
-      detail: '跨 Pool-East-01 / Pool-Core-03 锁定多台整机卡槽',
+      target: pp.name,
+      detail: `跨 ${pools.join(' / ')} 锁定 ${pp.allocations.length} 台整机 · ${pp.gpuCount} GPU`,
       level: 'info',
-    },
-    {
+    })
+  }
+  if (single) {
+    const alloc = single.allocations[0]
+    audits.push({
       id: 'aud-003',
-      ts: Date.now() - 2800_000,
+      ts: now - 2800_000,
       actor: 'scheduler',
       action: 'Binpack 装箱',
-      target: 'inf-qwen7b-chat-prod',
-      detail: '碎片节点 Node-003 GPU0 承接单卡推理',
+      target: single.name,
+      detail: `碎片节点 ${alloc?.hostname ?? '—'} GPU${alloc?.gpuIndices.join(',') ?? '0'} 承接`,
       level: 'info',
-    },
-    {
-      id: 'aud-004',
-      ts: Date.now() - 2100_000,
-      actor: USER,
-      action: '启用策略',
-      target: '绿电优先算电协同',
-      detail: '电站出力高峰时段优先调度绿电节点池',
-      level: 'success',
-    },
-    {
+    })
+  }
+  audits.push({
+    id: 'aud-004',
+    ts: now - 2100_000,
+    actor: USER,
+    action: '启用策略',
+    target: '绿电优先算电协同',
+    detail: '电站出力高峰时段优先调度绿电节点池',
+    level: 'success',
+  })
+  if (tp) {
+    const alloc = tp.allocations[0]
+    audits.push({
       id: 'aud-005',
-      ts: Date.now() - 1500_000,
+      ts: now - 1500_000,
       actor: 'scheduler',
       action: '卡间互联亲和调度',
-      target: 'inf-llama3-70b-tp4',
-      detail: '同一机箱同型号 GPU0-3 卡间互联拓扑匹配成功',
+      target: tp.name,
+      detail: `${alloc?.hostname ?? '—'} 同型号 GPU${alloc?.gpuIndices.join('-') ?? ''} 拓扑匹配成功`,
       level: 'info',
-    },
+    })
+  }
+  audits.push(
     {
       id: 'aud-006',
-      ts: Date.now() - 900_000,
+      ts: now - 900_000,
       actor: USER,
       action: '调整配额',
-      target: '大语言模型研发部',
-      detail: 'Guaranteed Quota 调整为 256 GPU',
+      target: 'LLM 预训练平台',
+      detail: 'Guaranteed Quota 调整为 192 GPU',
       level: 'warn',
     },
     {
       id: 'aud-007',
-      ts: Date.now() - 400_000,
+      ts: now - 400_000,
       actor: 'scheduler',
       action: '绿电迁移建议',
-      target: 'Pool-Core-03',
-      detail: '新疆光伏 + 汕头风电出力上升，建议迁移可抢占任务',
+      target: 'Pool-哈密',
+      detail: '哈密光伏 + 汕头风电出力上升，建议迁移可抢占 Over-quota 任务',
       level: 'info',
     },
-  ]
+  )
+  return audits
+}
+
+export function createInitialState(): AppState {
+  const servers = buildServers()
+  const running = seedInitialWorkloads(servers)
+  const queued = seedQueuedWorkloads()
+  const workloads = [...running, ...queued]
+  syncWorkloadLinks(servers, workloads)
+  injectDemoAnomalies(servers)
+  const audits = buildSeedAudits(workloads)
 
   return {
     authenticated: false,
     user: USER,
     role: '集群超级管理员',
-    pools: POOLS,
-    servers,
+    clusters: CLUSTERS.map((cluster) => ({
+      ...cluster,
+      endpoint: `https://api.${cluster.name}.fathompeak.cn`,
+      createdAt: Date.now() - 90 * 24 * 3600_000,
+    })),
+    departments: DEPARTMENTS.map((department) => ({ ...department })),
+    poolBindings: Object.fromEntries(Object.entries(POOL_SOURCES).map(([poolId, ids]) => [poolId, [...ids]])),
+    pools: POOLS.map((pool) => ({
+      ...pool,
+      status: 'Ready' as const,
+      clusterId: POOL_SOURCES[pool.id]?.[0],
+    })),
+    servers: servers.map((server) => ({ ...server, cordoned: false, draining: false })),
     workloads,
     projects: PROJECTS.map((p) => ({
       ...p,
       used: Math.min(
         p.overQuota,
-        workloads.filter((w) => w.projectId === p.id).reduce((n, w) => n + w.gpuCount, 0),
+        workloads.filter((w) => w.projectId === p.id && w.status === 'Running').reduce((n, w) => n + w.gpuCount, 0),
       ),
     })),
     policies: POLICIES.map((p) => ({ ...p })),
@@ -1222,12 +1810,112 @@ export function stopWorkload(state: AppState, workloadId: string): AppState {
   }
 }
 
+/** 管理员取消排队中的任务 */
+export function cancelQueuedWorkload(state: AppState, workloadId: string): AppState {
+  const target = state.workloads.find((w) => w.id === workloadId)
+  if (!target || target.status !== 'Pending') return state
+  const workloads = state.workloads.map((w) =>
+    w.id === workloadId
+      ? {
+          ...w,
+          status: 'Succeeded' as const,
+          podsRunning: 0,
+          events: [
+            ...w.events,
+            { ts: Date.now(), phase: 'Cancelled', message: '管理员取消排队，任务已退出调度队列' },
+          ],
+        }
+      : w,
+  )
+  const audits: AuditEvent[] = [
+    {
+      id: `aud-cancel-${Date.now()}`,
+      ts: Date.now(),
+      actor: state.user,
+      action: '取消排队',
+      target: target.name,
+      detail: '从调度队列移除 Pending 任务',
+      level: 'warn',
+    },
+    ...state.audits,
+  ]
+  return {
+    ...state,
+    workloads,
+    audits,
+    selectedWorkloadId: state.selectedWorkloadId === workloadId ? null : state.selectedWorkloadId,
+    metrics: computeMetrics(state.servers, workloads, state.stations),
+  }
+}
+
+/** 失败任务重新进入队列 */
+export function retryFailedWorkload(state: AppState, workloadId: string): AppState {
+  const target = state.workloads.find((w) => w.id === workloadId)
+  if (!target || target.status !== 'Failed') return state
+  const workloads = state.workloads.map((w) =>
+    w.id === workloadId
+      ? {
+          ...w,
+          status: 'Pending' as const,
+          podsRunning: 0,
+          allocations: [],
+          pods: w.pods.map((p) => ({ ...p, status: 'Pending' as const })),
+          events: [
+            ...w.events,
+            { ts: Date.now(), phase: 'Pending', message: '管理员触发失败重试，重新进入调度队列' },
+          ],
+        }
+      : w,
+  )
+  const audits: AuditEvent[] = [
+    {
+      id: `aud-retry-${Date.now()}`,
+      ts: Date.now(),
+      actor: state.user,
+      action: '重试任务',
+      target: target.name,
+      detail: '失败工作负载重新排队',
+      level: 'info',
+    },
+    ...state.audits,
+  ]
+  return {
+    ...state,
+    workloads,
+    audits,
+    metrics: computeMetrics(state.servers, workloads, state.stations),
+  }
+}
+
 export function tickLiveMetrics(state: AppState): AppState {
   const utilizationJitter = (Math.random() - 0.5) * 0.6
+  const hour = new Date().getHours() + new Date().getMinutes() / 60
   const stations = state.stations.map((s) => {
-    const delta = (Math.random() - 0.5) * s.capacityMw * 0.012
-    const currentMw = Math.max(s.capacityMw * 0.35, Math.min(s.capacityMw * 0.98, s.currentMw + delta))
-    return { ...s, currentMw: Math.round(currentMw * 10) / 10 }
+    // 按能源类型模拟日内出力：光伏午高夜低，风电起伏，水电平稳
+    let floor = 0.35
+    let ceiling = 0.98
+    let green = s.greenRatio
+    if (s.type.includes('光伏')) {
+      const solarCurve = Math.max(0, Math.sin(((hour - 6) / 12) * Math.PI))
+      floor = 0.05
+      ceiling = 0.15 + solarCurve * 0.8
+      green = Math.min(0.99, 0.55 + solarCurve * 0.42)
+    } else if (s.type.includes('风')) {
+      floor = 0.28
+      ceiling = 0.92
+      green = 0.94 + (Math.random() - 0.5) * 0.04
+    } else {
+      floor = 0.55
+      ceiling = 0.95
+      green = 0.98 + (Math.random() - 0.5) * 0.02
+    }
+    const delta = (Math.random() - 0.5) * s.capacityMw * 0.02
+    const currentMw = Math.max(s.capacityMw * floor, Math.min(s.capacityMw * ceiling, s.currentMw + delta))
+    return {
+      ...s,
+      currentMw: Math.round(currentMw * 10) / 10,
+      greenRatio: Math.round(Math.min(1, Math.max(0.4, green)) * 1000) / 1000,
+    }
   })
   const workloads = state.workloads.map((w) =>
     w.status === 'Running'
@@ -1257,9 +1945,12 @@ export function tickLiveMetrics(state: AppState): AppState {
 export function clusterTitle(name: string) {
   const base = name
     .replace(/电站$/, '')
+    .replace(/园区/g, '')
     .replace(/区/g, '')
     .replace(/分布式光伏$/, '分布式')
     .replace(/集中式光伏$/, '集中式')
+    .replace(/海上风电接入$/, '海上风电')
+    .replace(/水电接入$/, '水电')
   return `${base}集群`
 }
 

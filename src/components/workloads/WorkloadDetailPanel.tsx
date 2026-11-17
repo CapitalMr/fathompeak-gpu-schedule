@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Crosshair, Share2, Square, X } from 'lucide-react'
+import { Crosshair, ListOrdered, RotateCcw, Share2, Square, X } from 'lucide-react'
 import { formatDuration, strategyLabel } from '../../mock/engine'
 import { useApp } from '../../store/AppContext'
 import type { Workload } from '../../types'
@@ -35,9 +35,22 @@ function statusLabel(status: Workload['status']) {
 }
 
 export function WorkloadDetailPanel({ workload, onClose }: Props) {
-  const { stop, selectWorkload, openScheduleFlow } = useApp()
+  const { stop, cancelQueue, retryFailed, selectWorkload, openScheduleFlow, state } = useApp()
   const navigate = useNavigate()
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('Structure')
+  const project = state.projects.find((item) => item.id === workload.projectId)
+  const waitReason =
+    workload.status === 'Pending'
+      ? workload.events.find((event) => event.phase === 'Pending')?.message ??
+        workload.events[0]?.message ??
+        '等待可用资源'
+      : null
+  const failReason =
+    workload.status === 'Failed'
+      ? workload.events.find((event) => event.phase === 'Failed')?.message ??
+        workload.events[workload.events.length - 1]?.message ??
+        '任务执行失败'
+      : null
 
   return (
     <aside className="flex h-full w-[420px] shrink-0 flex-col border-l border-border bg-[linear-gradient(180deg,#ffffff_0%,#fbfaf7_100%)] shadow-[-8px_0_24px_rgba(47,99,184,0.04)]">
@@ -54,12 +67,28 @@ export function WorkloadDetailPanel({ workload, onClose }: Props) {
             <span className={`rounded-full px-2 py-0.5 ${statusTone(workload.status)}`}>
               {statusLabel(workload.status)}
             </span>
+            {project ? (
+              <span className="rounded-full border border-border px-2 py-0.5 font-mono text-muted">P{project.priority}</span>
+            ) : null}
           </div>
         </div>
         <button type="button" onClick={onClose} className="rounded-full p-1 text-dim hover:bg-[rgba(61,49,79,0.06)] hover:text-text">
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {(waitReason || failReason) && (
+        <div
+          className={`border-b px-4 py-2.5 text-[12px] ${
+            failReason
+              ? 'border-[rgba(155,58,58,0.18)] bg-[rgba(155,58,58,0.06)] text-alert'
+              : 'border-[rgba(138,98,50,0.18)] bg-[rgba(138,98,50,0.08)] text-gang'
+          }`}
+        >
+          <div className="text-[10px] opacity-80">{failReason ? '失败原因' : '阻塞原因'}</div>
+          <div className="mt-0.5 leading-relaxed">{failReason ?? waitReason}</div>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2 border-b border-border px-4 py-3">
         <div className="rounded-xl border border-border bg-void/50 px-2.5 py-2 text-center">
@@ -85,9 +114,7 @@ export function WorkloadDetailPanel({ workload, onClose }: Props) {
             type="button"
             onClick={() => setTab(t.id)}
             className={`shrink-0 border-b-2 px-2.5 py-2 text-[11px] transition ${
-              tab === t.id
-                ? 'border-infer text-infer'
-                : 'border-transparent text-dim hover:text-muted'
+              tab === t.id ? 'border-infer text-infer' : 'border-transparent text-dim hover:text-muted'
             }`}
           >
             {t.label}
@@ -100,6 +127,7 @@ export function WorkloadDetailPanel({ workload, onClose }: Props) {
           <dl className="space-y-3 text-xs">
             {[
               ['项目', workload.projectName],
+              ['优先级', project ? `P${project.priority}` : '—'],
               ['集群', workload.clusterName],
               ['创建人', workload.createdBy],
               ['模型', workload.model],
@@ -164,12 +192,12 @@ export function WorkloadDetailPanel({ workload, onClose }: Props) {
         {tab === 'Metrics' && (
           <div className="grid grid-cols-2 gap-2">
             <Metric label="时延" value={workload.latencyMs ? `${workload.latencyMs} ms` : '—'} />
+            <Metric label="吞吐" value={workload.tokensPerSec ? `${workload.tokensPerSec} tok/s` : '—'} />
             <Metric
-              label="吞吐"
-              value={workload.tokensPerSec ? `${workload.tokensPerSec} tok/s` : '—'}
+              label="GPU 占用"
+              value={workload.status === 'Running' ? `${Math.min(98, 62 + (workload.gpuCount % 18))}%` : '—'}
             />
-            <Metric label="GPU 利用率" value={`${58 + (workload.gpuCount % 20)}%`} />
-            <Metric label="显存" value={`${workload.memoryGb} GB`} />
+            <Metric label="显存申请" value={`${workload.memoryGb} GB`} />
           </div>
         )}
       </div>
@@ -184,27 +212,85 @@ export function WorkloadDetailPanel({ workload, onClose }: Props) {
           查看调度流程
         </button>
         <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={workload.status !== 'Running'}
-            onClick={() => {
-              selectWorkload(workload.id)
-              navigate('/monitor')
-            }}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border px-2 py-2 text-[11px] text-muted hover:text-infer disabled:opacity-40"
-          >
-            <Crosshair className="h-3.5 w-3.5" />
-            定位到总览
-          </button>
-          <button
-            type="button"
-            disabled={workload.status !== 'Running'}
-            onClick={() => stop(workload.id)}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-alert/30 px-2 py-2 text-[11px] text-alert hover:bg-alert/10 disabled:opacity-40"
-          >
-            <Square className="h-3.5 w-3.5" />
-            停止
-          </button>
+          {workload.status === 'Pending' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => navigate('/queues')}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border px-2 py-2 text-[11px] text-muted hover:text-infer"
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                打开队列
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  cancelQueue(workload.id)
+                  onClose()
+                }}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-alert/30 px-2 py-2 text-[11px] text-alert hover:bg-alert/10"
+              >
+                <Square className="h-3.5 w-3.5" />
+                取消排队
+              </button>
+            </>
+          ) : null}
+          {workload.status === 'Failed' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  selectWorkload(workload.id)
+                  navigate('/queues')
+                }}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border px-2 py-2 text-[11px] text-muted hover:text-infer"
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                查看队列
+              </button>
+              <button
+                type="button"
+                onClick={() => retryFailed(workload.id)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-[rgba(47,99,184,0.28)] bg-[#eef3fb] px-2 py-2 text-[11px] font-medium text-infer hover:bg-[#e3ecfa]"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                重试
+              </button>
+            </>
+          ) : null}
+          {workload.status === 'Running' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  selectWorkload(workload.id)
+                  navigate('/monitor')
+                }}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border px-2 py-2 text-[11px] text-muted hover:text-infer"
+              >
+                <Crosshair className="h-3.5 w-3.5" />
+                定位到总览
+              </button>
+              <button
+                type="button"
+                onClick={() => stop(workload.id)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-alert/30 px-2 py-2 text-[11px] text-alert hover:bg-alert/10"
+              >
+                <Square className="h-3.5 w-3.5" />
+                停止
+              </button>
+            </>
+          ) : null}
+          {workload.status !== 'Running' && workload.status !== 'Pending' && workload.status !== 'Failed' ? (
+            <button
+              type="button"
+              onClick={() => openScheduleFlow(workload.id)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border px-2 py-2 text-[11px] text-muted hover:text-infer"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              回看调度
+            </button>
+          ) : null}
         </div>
       </div>
     </aside>

@@ -47,6 +47,26 @@ export interface GpuSlot {
   workloadId?: string
 }
 
+export type ClusterConnStatus = 'Connected' | 'Connecting' | 'Degraded' | 'Offline'
+export type PoolLifecycle = 'Ready' | 'Disabled' | 'Draining'
+
+export interface ManagedCluster {
+  id: string
+  name: string
+  region: string
+  kubernetes: string
+  status: ClusterConnStatus
+  stationId: string
+  endpoint?: string
+  createdAt: number
+}
+
+export interface ManagedDepartment {
+  id: string
+  name: string
+  gpuQuota: number
+}
+
 export interface ServerNode {
   id: string
   hostname: string
@@ -59,6 +79,10 @@ export interface ServerNode {
   gpus: GpuSlot[]
   /** 节点健康状态（字段名历史兼容；展示层用「状态」） */
   nvlinkStatus: 'healthy' | 'degraded' | 'offline'
+  /** 禁止新调度（Cordon） */
+  cordoned?: boolean
+  /** 驱逐中（Drain） */
+  draining?: boolean
   rdmaGbps: number
   temperature: number
   /** 机箱底板功耗（CPU/内存/网卡/PSU），随槽位规模变化 */
@@ -76,6 +100,8 @@ export interface NodePool {
   stationIds: string[]
   x: number
   y: number
+  status?: PoolLifecycle
+  clusterId?: string
 }
 
 export interface Workload {
@@ -146,7 +172,9 @@ export interface ClusterMetrics {
   gpuCount: number
   utilization: number
   runningTasks: number
+  /** 全国园区绿电接入当前出力合计（MW） */
   greenPowerMw: number
+  /** 出力加权绿电占比，量纲 0–1 */
   greenRatio: number
 }
 
@@ -154,6 +182,9 @@ export interface AppState {
   authenticated: boolean
   user: string
   role: string
+  clusters: ManagedCluster[]
+  departments: ManagedDepartment[]
+  poolBindings: Record<string, string[]>
   pools: NodePool[]
   servers: ServerNode[]
   workloads: Workload[]

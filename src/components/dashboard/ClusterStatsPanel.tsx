@@ -286,7 +286,7 @@ export function ClusterStatsPanel() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/clusters')}
+              onClick={() => navigate('/nodes')}
               className="text-[11px] text-muted hover:text-infer"
             >
               查看节点

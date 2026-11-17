@@ -1,162 +1,185 @@
-import { ScrollText, ShieldCheck, ToggleLeft } from 'lucide-react'
+import { useState } from 'react'
+import { DataTable, Drawer, Field, GhostButton, PageFrame, PrimaryButton, StatusPill, TextInput } from '../components/console/ui'
+import { WORKLOAD_POLICIES, type WorkloadPolicy } from '../platform/model'
 import { useApp } from '../store/AppContext'
 
-function formatTime(ts: number) {
-  return new Date(ts).toLocaleString('zh-CN', { hour12: false })
-}
-
-function policyTag(id: string): { label: string; tone: string } {
-  if (id.includes('green')) return { label: '算电', tone: 'text-infer border-[rgba(47,99,184,0.28)] bg-[#eef3fb]' }
-  if (id.includes('preempt')) return { label: '抢占', tone: 'text-gang border-[rgba(138,98,50,0.28)] bg-[rgba(138,98,50,0.08)]' }
-  if (id.includes('nvlink') || id.includes('gang'))
-    return { label: '拓扑', tone: 'text-multi border-[rgba(78,63,102,0.28)] bg-[rgba(78,63,102,0.08)]' }
-  if (id.includes('mig')) return { label: '隔离', tone: 'text-muted border-border bg-void' }
-  return { label: '装箱', tone: 'text-infer border-[rgba(47,99,184,0.22)] bg-[rgba(47,99,184,0.06)]' }
-}
-
-function auditDot(level: 'info' | 'warn' | 'success') {
-  if (level === 'success') return 'bg-infer'
-  if (level === 'warn') return 'bg-gang'
-  return 'bg-multi'
-}
+const SOURCES = ['系统', '集群', '部门', '项目'] as const
 
 export function Policies() {
-  const { state, togglePolicy } = useApp()
-  const enabled = state.policies.filter((p) => p.enabled).length
-  const disabled = state.policies.length - enabled
-  const warnAudits = state.audits.filter((a) => a.level === 'warn').length
-  const dayAudits = state.audits.length
+  const [rows, setRows] = useState<WorkloadPolicy[]>(WORKLOAD_POLICIES)
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState({ name: '', parameter: 'gpu', rule: '', source: '项目' as WorkloadPolicy['source'] })
+
+  const visible = rows.filter((row) => !query.trim() || row.name.includes(query.trim()) || row.parameter.includes(query.trim()))
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-auto px-8 pb-8 pt-1">
-      <div>
-        <p className="mb-1 text-[12.5px] text-dim">治理</p>
-        <h2 className="text-[28px] leading-none">调度策略</h2>
-        <p className="mt-1.5 text-[13px] text-muted">
-          拓扑亲和 · 配额抢占 · 算电权重 · 操作审计全程可回溯
-        </p>
+    <PageFrame
+      kicker="策略"
+      title="工作负载策略"
+      description="策略约束提交表单里的字段，并给出默认值。下级作用域会继承上级规则，每一行都标出来源。"
+      actions={
+        <PrimaryButton
+          onClick={() => {
+            setDraft({ name: '', parameter: 'gpu', rule: '', source: '项目' })
+            setOpen(true)
+          }}
+        >
+          新建策略
+        </PrimaryButton>
+      }
+    >
+      <div className="mb-3 rounded-xl border border-border bg-white px-3.5 py-2.5 text-[12px] text-muted">
+        列表按作用域继承展示 · 新建策略会追加到当前会话，便于演示提交约束链路
       </div>
-
-      <div className="sheet grid grid-cols-2 overflow-hidden sm:grid-cols-4">
-        {[
-          { label: '已启用', value: String(enabled), unit: `/ ${state.policies.length} 条规则` },
-          { label: '已关闭', value: String(disabled), unit: '待评估' },
-          { label: '近次审计', value: String(dayAudits), unit: '操作记录' },
-          { label: '告警级变更', value: String(warnAudits), unit: '需关注' },
-        ].map((item, i) => (
-          <div key={item.label} className={`grid gap-0.5 px-3 py-3 ${i > 0 ? 'border-l border-border' : ''}`}>
-            <span className="text-[11px] text-dim">{item.label}</span>
-            <b className="metric-num text-[24px] font-normal leading-none">{item.value}</b>
-            <small className="text-[11px] text-dim">{item.unit}</small>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid min-h-0 gap-3 lg:grid-cols-2">
-        <section className="space-y-2.5">
-          <div className="flex items-center gap-2 px-0.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-dim" />
-            <h3 className="text-[13px] font-medium">激活中的调度器规则</h3>
-          </div>
-          {state.policies.map((p) => {
-            const tag = policyTag(p.id)
-            return (
-              <div
-                key={p.id}
-                className={`sheet relative overflow-hidden p-3.5 transition ${
-                  p.enabled ? 'side-glow' : 'opacity-90'
-                }`}
+      <DataTable
+        rows={visible}
+        toolbar={<TextInput value={query} onChange={setQuery} placeholder="搜索策略或参数" className="w-64" />}
+        columns={[
+          { key: 'name', header: '策略', render: (row) => <span className="font-medium text-text">{row.name}</span> },
+          { key: 'scope', header: '作用域', render: (row) => row.scope },
+          { key: 'type', header: '工作负载', render: (row) => row.workloadType },
+          { key: 'param', header: '参数', render: (row) => <span className="font-mono text-[12px]">{row.parameter}</span> },
+          { key: 'default', header: '默认值', render: (row) => row.defaultValue },
+          { key: 'rule', header: '规则', render: (row) => row.rule },
+          {
+            key: 'source',
+            header: '来源',
+            render: (row) => <StatusPill tone={row.source === '系统' ? 'neutral' : 'ok'}>{row.source}</StatusPill>,
+          },
+        ]}
+      />
+      {open ? (
+        <Drawer
+          title="新建工作负载策略"
+          onClose={() => setOpen(false)}
+          footer={
+            <>
+              <GhostButton onClick={() => setOpen(false)}>取消</GhostButton>
+              <PrimaryButton
+                onClick={() => {
+                  if (!draft.name.trim() || !draft.rule.trim()) return
+                  setRows((prev) => [
+                    {
+                      id: `wp-${Date.now()}`,
+                      name: draft.name.trim(),
+                      scope: '项目 · 当前作用域',
+                      workloadType: '全部',
+                      parameter: draft.parameter,
+                      defaultValue: '—',
+                      rule: draft.rule.trim(),
+                      source: draft.source,
+                    },
+                    ...prev,
+                  ])
+                  setOpen(false)
+                }}
               >
-                <div
-                  className={`absolute inset-y-0 left-0 w-[3px] ${p.enabled ? 'bg-infer' : 'bg-idle'}`}
-                />
-                <div className="flex items-start justify-between gap-3 pl-1.5">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-medium text-text">{p.name}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${tag.tone}`}>
-                        {tag.label}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] ${
-                          p.enabled
-                            ? 'bg-[rgba(47,99,184,0.1)] text-infer'
-                            : 'bg-[rgba(61,49,79,0.06)] text-dim'
-                        }`}
-                      >
-                        {p.enabled ? '运行中' : '已停用'}
-                      </span>
-                    </div>
-                    <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{p.description}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePolicy(p.id)}
-                    aria-label={p.enabled ? '关闭策略' : '启用策略'}
-                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${
-                      p.enabled ? 'bg-infer' : 'bg-idle'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                        p.enabled ? 'left-5' : 'left-0.5'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-          {disabled > 0 && (
-            <div className="rounded-xl border border-dashed border-border px-3.5 py-3 text-[12px] text-dim">
-              有 {disabled} 条策略处于关闭状态，评估业务影响后再决定是否重新启用。
-            </div>
-          )}
-        </section>
-
-        <section className="sheet flex min-h-[420px] flex-col overflow-hidden">
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-[rgba(248,248,248,0.92)] px-3.5 py-2.5 backdrop-blur">
-            <div className="flex items-center gap-2 text-[13px] font-medium">
-              <ScrollText className="h-3.5 w-3.5 text-dim" />
-              操作审计
-            </div>
-            <span className="font-mono text-[11px] text-dim">{dayAudits} events</span>
-          </div>
-          <div className="flex-1 space-y-0 overflow-auto p-2">
-            {state.audits.map((a) => (
-              <div
-                key={a.id}
-                className="flex gap-3 rounded-xl px-2.5 py-2.5 transition hover:bg-[rgba(47,99,184,0.04)]"
+                创建
+              </PrimaryButton>
+            </>
+          }
+        >
+          <div className="grid gap-3">
+            <Field label="名称">
+              <input
+                value={draft.name}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                className="h-8 rounded-md border border-border px-2 text-[13px]"
+              />
+            </Field>
+            <Field label="参数">
+              <input
+                value={draft.parameter}
+                onChange={(event) => setDraft({ ...draft, parameter: event.target.value })}
+                className="h-8 rounded-md border border-border px-2 font-mono text-[13px]"
+              />
+            </Field>
+            <Field label="规则">
+              <input
+                value={draft.rule}
+                onChange={(event) => setDraft({ ...draft, rule: event.target.value })}
+                className="h-8 rounded-md border border-border px-2 text-[13px]"
+              />
+            </Field>
+            <Field label="来源">
+              <select
+                value={draft.source}
+                onChange={(event) => setDraft({ ...draft, source: event.target.value as WorkloadPolicy['source'] })}
+                className="h-8 rounded-md border border-border bg-white px-2 text-[13px]"
               >
-                <div className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${auditDot(a.level)}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                    <span className="font-medium text-text">{a.action}</span>
-                    <span className="text-dim">→</span>
-                    <span className="truncate text-muted">{a.target}</span>
-                    {a.level === 'warn' && (
-                      <span className="rounded-full border border-[rgba(138,98,50,0.28)] bg-[rgba(138,98,50,0.08)] px-1.5 py-0.5 text-[10px] text-gang">
-                        关注
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 text-[11px] leading-relaxed text-dim">{a.detail}</div>
-                  <div className="mt-1.5 flex gap-3 font-mono text-[10px] tracking-wide text-dim">
-                    <span>{formatTime(a.ts)}</span>
-                    <span>{a.actor}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {state.audits.length === 0 && (
-              <div className="grid place-items-center py-16 text-[13px] text-dim">
-                <ToggleLeft className="mb-2 h-5 w-5 opacity-50" />
-                暂无审计事件
-              </div>
-            )}
+                {SOURCES.map((source) => (
+                  <option key={source}>{source}</option>
+                ))}
+              </select>
+            </Field>
           </div>
-        </section>
+        </Drawer>
+      ) : null}
+    </PageFrame>
+  )
+}
+
+const RULE_SCOPE: Record<string, string> = {
+  'pol-binpack': '账户',
+  'pol-nvlink': '集群 · 全部',
+  'pol-gang': '集群 · 全部',
+  'pol-mig': '集群 · cls-daxing',
+  'pol-green': '集群 · 全部',
+  'pol-preempt': '账户',
+}
+
+export function SchedulingRules() {
+  const { state, togglePolicy } = useApp()
+  const enabledCount = state.policies.filter((row) => row.enabled).length
+  const [toast, setToast] = useState<string | null>(null)
+
+  return (
+    <PageFrame
+      kicker="策略"
+      title="调度规则"
+      description="调度规则决定工作负载怎样放置和让出 GPU：装箱、拓扑亲和、Gang、显存切分、抢占，以及绿电出力权重。"
+    >
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[rgba(47,99,184,0.18)] bg-[#eef3fb] px-3.5 py-3">
+        <div>
+          <div className="text-[12px] font-medium text-infer">规则生效面</div>
+          <p className="mt-0.5 text-[12px] text-muted">
+            当前 {enabledCount}/{state.policies.length} 条启用 · 变更会写入审计，并影响后续排队与放置解释
+          </p>
+        </div>
+        {toast ? <div className="rounded-full bg-white px-3 py-1 text-[11px] text-infer shadow-sm">{toast}</div> : null}
       </div>
-    </div>
+      <DataTable
+        rows={state.policies}
+        columns={[
+          { key: 'name', header: '规则', render: (row) => <span className="font-medium text-text">{row.name}</span> },
+          { key: 'scope', header: '作用域', render: (row) => RULE_SCOPE[row.id] ?? '集群' },
+          { key: 'desc', header: '行为', render: (row) => row.description },
+          {
+            key: 'state',
+            header: '状态',
+            render: (row) => <StatusPill tone={row.enabled ? 'ok' : 'neutral'}>{row.enabled ? '生效' : '关闭'}</StatusPill>,
+          },
+          {
+            key: 'toggle',
+            header: '操作',
+            render: (row) => (
+              <button
+                type="button"
+                className="rounded-full border border-[rgba(47,99,184,0.28)] bg-white px-2.5 py-1 text-[11px] font-medium text-infer hover:bg-[#eef3fb]"
+                onClick={() => {
+                  const next = !row.enabled
+                  togglePolicy(row.id)
+                  setToast(`已${next ? '启用' : '关闭'}「${row.name}」`)
+                  window.setTimeout(() => setToast(null), 2200)
+                }}
+              >
+                {row.enabled ? '关闭' : '启用'}
+              </button>
+            ),
+          },
+        ]}
+      />
+    </PageFrame>
   )
 }

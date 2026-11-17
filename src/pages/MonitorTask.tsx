@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { FilterSelect } from '../components/console/ui'
 import { MonitorLevelBar } from '../components/monitor/MonitorLevelBar'
 import { serversForStation, workloadsForStation } from '../components/monitor/scope'
-import { QUEUE, TaskHardware } from '../components/monitor/TaskBoard'
+import { TaskHardware } from '../components/monitor/TaskBoard'
 import { formatDuration, strategyLabel, clusterTitle } from '../mock/engine'
 import { useApp } from '../store/AppContext'
 import type { Workload } from '../types'
@@ -23,11 +24,14 @@ export function MonitorTask() {
     [state.workloads, scopedServers],
   )
   const rows = useMemo(() => {
-    return [...scopedWorkloads, ...QUEUE]
+    // 排队任务尚未落节点，全国视图一并展示 Pending
+    const pending = state.workloads.filter((workload) => workload.status === 'Pending')
+    const merged = [...scopedWorkloads, ...pending.filter((item) => !scopedWorkloads.some((row) => row.id === item.id))]
+    return merged
       .filter((workload) => workload.status === 'Running' || workload.status === 'Pending')
       .filter((workload) => (filter === 'all' ? true : workload.status === filter))
       .sort((a, b) => Number(b.status === 'Running') - Number(a.status === 'Running') || b.gpuCount - a.gpuCount)
-  }, [scopedWorkloads, filter])
+  }, [scopedWorkloads, filter, state.workloads])
   const workload = rows.find((item) => item.id === workloadId) ?? null
 
   return (
@@ -38,26 +42,18 @@ export function MonitorTask() {
           <div className="px-3 py-3">
             <div className="font-mono text-[10px] tracking-[0.16em] text-dim">任务级硬件流转</div>
             <div className="mt-1 text-[13px] text-text">{activeTitle}</div>
-            <div className="mt-2 flex gap-1">
-              {(
-                [
-                  ['all', '全部'],
-                  ['Running', '运行'],
-                  ['Pending', '排队'],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setFilter(id)}
-                  className={`rounded-[8px] px-1.5 py-0.5 text-[11px] ${
-                    filter === id ? 'bg-[rgba(47,99,184,0.12)] text-infer' : 'text-dim hover:text-text'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <FilterSelect
+              className="mt-2"
+              size="sm"
+              label="状态"
+              value={filter}
+              onChange={(value) => setFilter(value as typeof filter)}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'Running', label: '运行' },
+                { value: 'Pending', label: '排队' },
+              ]}
+            />
           </div>
           <div className="grid">
             {rows.map((item) => (

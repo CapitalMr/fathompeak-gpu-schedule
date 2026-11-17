@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MonitorLevelBar } from '../components/monitor/MonitorLevelBar'
 import { NationalFlyMap } from '../components/monitor/NationalFlyMap'
-import { QUEUE } from '../components/monitor/TaskBoard'
 import { stationStat } from '../components/monitor/scope'
 import { clusterTitle } from '../mock/engine'
 import { useApp } from '../store/AppContext'
@@ -16,7 +15,7 @@ export function Monitor() {
     () => state.stations.map((item) => stationStat(item.id, state.servers, state.pools, state.workloads)),
     [state.stations, state.servers, state.pools, state.workloads],
   )
-  const queued = state.workloads.filter((workload) => workload.status === 'Pending').length + QUEUE.length
+  const queued = state.workloads.filter((workload) => workload.status === 'Pending').length
 
   return (
     <div className="flex h-full flex-col bg-void text-text">

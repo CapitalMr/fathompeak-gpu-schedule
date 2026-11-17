@@ -12,7 +12,7 @@ import {
   Server,
   Thermometer,
 } from 'lucide-react'
-import { QUEUE } from '../mock/queue'
+import { FilterSelect } from '../components/console/ui'
 import { useApp } from '../store/AppContext'
 
 type Severity = 'critical' | 'warning' | 'info'
@@ -114,6 +114,8 @@ export function Alerts() {
   const [status, setStatus] = useState<'all' | AlertStatus>('all')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [ackIds, setAckIds] = useState<Set<string>>(() => new Set())
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => new Set())
 
   const inventory = useMemo(() => {
     const gpus = state.servers.flatMap((s) => s.gpus)
@@ -122,8 +124,8 @@ export function Alerts() {
     const degraded = state.servers.filter((s) => s.nvlinkStatus === 'degraded').length
     const offline = state.servers.filter((s) => s.nvlinkStatus === 'offline').length
     const overQuota = state.projects.filter((p) => p.used > p.guaranteed).length
-    const lowPower = state.stations.filter((s) => s.currentMw / s.capacityMw < 0.5).length
-    const pending = state.workloads.filter((w) => w.status === 'Pending').length + QUEUE.length
+    const lowPower = state.stations.filter((s) => s.currentMw / s.capacityMw < 0.45).length
+    const pending = state.workloads.filter((w) => w.status === 'Pending').length
     const failed = state.workloads.filter((w) => w.status === 'Failed').length
     const avgTemp = state.servers.length
       ? Math.round(state.servers.reduce((n, s) => n + s.temperature, 0) / state.servers.length)
@@ -174,7 +176,7 @@ export function Alerts() {
           count: faultGpus.length,
           ts: now - (8 + index) * 60_000,
           durationSec: (8 + index) * 60,
-          action: { label: '查看节点', to: '/clusters' },
+          action: { label: '查看节点', to: '/nodes' },
         })
       }
 
@@ -221,7 +223,7 @@ export function Alerts() {
           count: 1,
           ts: now - (28 + index) * 60_000,
           durationSec: (28 + index) * 60,
-          action: { label: '查看节点', to: '/clusters' },
+          action: { label: '查看节点', to: '/nodes' },
         })
       }
 
@@ -229,22 +231,22 @@ export function Alerts() {
         items.push({
           id: `offline-${server.id}`,
           severity: 'critical',
-          kind: 'node',
+          kind: 'network',
           status: 'firing',
-          title: '节点离线',
-          detail: `${server.hostname} 已失联，相关任务需迁移或等待恢复。`,
+          title: '卡间互联 Fabric 离线',
+          detail: `${server.hostname} 卡间互联管理面离线，同机多卡任务无法调度；节点 Agent 仍存活。`,
           target: server.hostname,
-          source: 'Node Agent',
-          metric: 'heartbeat=lost',
-          threshold: 'heartbeat ≤ 30s',
+          source: 'Fabric Manager',
+          metric: 'fabric=offline',
+          threshold: 'fabric == healthy',
           pool: poolName(server.poolId),
           region: poolRegion(server.poolId),
-          impact: `整机 ${server.gpus.length} 卡不可用`,
-          suggestion: '确认 BMC/网络，必要时触发故障转移。',
+          impact: `整机 ${server.gpus.length} 卡不可用于 TP/PP`,
+          suggestion: '检查 Fabric Manager / 交换机，临时打 NoSchedule-TP。',
           count: 1,
           ts: now - (45 + index) * 60_000,
           durationSec: (45 + index) * 60,
-          action: { label: '查看节点', to: '/clusters' },
+          action: { label: '查看节点', to: '/nodes' },
         })
       }
 
@@ -311,7 +313,7 @@ export function Alerts() {
           count: 1,
           ts: now - (33 + index) * 60_000,
           durationSec: (33 + index) * 60,
-          action: { label: '查看节点', to: '/clusters' },
+          action: { label: '查看节点', to: '/nodes' },
         })
       }
     })
@@ -437,8 +439,9 @@ export function Alerts() {
       }
     })
 
-    const pendingLive = state.workloads.filter((w) => w.status === 'Pending').length
-    const pendingTotal = pendingLive + QUEUE.length
+    const pendingList = state.workloads.filter((w) => w.status === 'Pending')
+    const pendingTotal = pendingList.length
+    const pendingGpus = pendingList.reduce((n, q) => n + q.gpuCount, 0)
     items.push({
       id: 'queue-backlog',
       severity: pendingTotal >= 5 ? 'warning' : 'info',
@@ -452,22 +455,26 @@ export function Alerts() {
       threshold: 'pending < 3',
       pool: '全局',
       region: '全部园区',
-      impact: `等待 GPU 约 ${QUEUE.reduce((n, q) => n + q.gpuCount, 0)} 张`,
+      impact: `等待 GPU 约 ${pendingGpus} 张`,
       suggestion: '优先保障 P1 通道，清理低优占卡或扩容碎片节点。',
       count: pendingTotal,
       ts: now - 6 * 60_000,
       durationSec: 6 * 60,
-      action: { label: '查看队列', to: '/queues' },
+      action: { label: '打开调度队列', to: '/queues' },
     })
 
-    QUEUE.filter((q) => q.queuePriority <= 1).forEach((q, index) => {
+    pendingList
+      .filter((q) => (state.projects.find((p) => p.id === q.projectId)?.priority ?? 3) <= 1)
+      .forEach((q, index) => {
+      const waitReason =
+        q.events.find((e) => e.phase === 'Pending')?.message ?? q.events[0]?.message ?? '等待可用资源'
       items.push({
         id: `queue-block-${q.id}`,
         severity: 'warning',
         kind: 'schedule',
         status: 'firing',
         title: `高优任务阻塞 · ${q.name}`,
-        detail: q.waitReason,
+        detail: waitReason,
         target: q.name,
         source: 'Scheduler',
         metric: `wait=${formatDuration(q.durationSec)}`,
@@ -479,7 +486,7 @@ export function Alerts() {
         count: 1,
         ts: now - (10 + index * 3) * 60_000,
         durationSec: q.durationSec,
-        action: { label: '查看队列', to: '/queues' },
+        action: { label: '打开调度队列', to: '/queues' },
       })
     })
 
@@ -504,11 +511,23 @@ export function Alerts() {
           count: 1,
           ts: now - (90 + index * 10) * 60_000,
           durationSec: (90 + index * 10) * 60,
-          action: { label: '调度策略', to: '/policies' },
-        })
+        action: { label: '调度规则', to: '/scheduling' },
+      })
       })
 
-    // 补充平台级告警目录，覆盖各类型展示
+    const sampleNode =
+      state.servers.find((s) => s.poolId === 'pool-daxing' && s.gpus.some((g) => g.state === 'fault')) ??
+      state.servers.find((s) => s.poolId === 'pool-daxing') ??
+      state.servers[0]
+    const hamiNode =
+      state.servers.find((s) => s.poolId === 'pool-hami' && s.gpus.some((g) => g.state !== 'idle')) ??
+      state.servers.find((s) => s.poolId === 'pool-hami')
+    const preemptTargets = state.workloads
+      .filter((w) => w.status === 'Running' && state.projects.find((p) => p.id === w.projectId)?.preemptible)
+      .slice(0, 4)
+      .map((w) => w.name)
+
+    // 补充平台级告警目录，目标均绑定真实库存对象
     const catalog: AlertItem[] = [
       {
         id: 'catalog-xid-79',
@@ -517,18 +536,18 @@ export function Alerts() {
         status: 'firing',
         title: 'Xid 79 驱动错误',
         detail: '检测到 GPU Fallen Off Bus，相关进程已中断。',
-        target: 'gpu-node-017 / GPU3',
+        target: `${sampleNode?.hostname ?? 'bjdx-gpu-n01'} / GPU3`,
         source: 'DCGM',
         metric: 'xid=79',
         threshold: 'xid critical = 0',
-        pool: 'Pool-East-01',
-        region: '华北智算中心',
+        pool: poolName(sampleNode?.poolId ?? 'pool-daxing'),
+        region: poolRegion(sampleNode?.poolId ?? 'pool-daxing'),
         impact: '1 张卡掉线，同机任务可能失败',
         suggestion: '重置 GPU 或重启节点，并复核 PCIe 链路。',
         count: 1,
         ts: now - 21 * 60_000,
         durationSec: 21 * 60,
-        action: { label: '查看节点', to: '/clusters' },
+        action: { label: '查看节点', to: '/nodes' },
       },
       {
         id: 'catalog-ecc',
@@ -536,19 +555,19 @@ export function Alerts() {
         kind: 'gpu',
         status: 'firing',
         title: 'HBM ECC 可纠正错误增多',
-        detail: '1 小时内 Correctable ECC 上升超过基线 3 倍。',
-        target: 'Pool-Core-03',
+        detail: `${hamiNode?.hostname ?? 'xjhm-gpu-n01'} 1 小时内 Correctable ECC 上升超过基线 3 倍。`,
+        target: hamiNode?.hostname ?? 'xjhm-gpu-n01',
         source: 'DCGM',
         metric: 'ecc_db_e=128/h',
         threshold: 'ecc_db_e < 40/h',
-        pool: 'Pool-Core-03',
-        region: '华北智算中心',
+        pool: 'Pool-哈密',
+        region: '新疆哈密',
         impact: '潜在显存老化风险',
         suggestion: '持续观察 24h，若继续上升则更换卡位。',
         count: 128,
         ts: now - 70 * 60_000,
         durationSec: 70 * 60,
-        action: { label: '查看节点', to: '/clusters' },
+        action: { label: '查看节点', to: '/nodes' },
       },
       {
         id: 'catalog-mem',
@@ -556,13 +575,13 @@ export function Alerts() {
         kind: 'gpu',
         status: 'acked',
         title: '显存水位持续高位',
-        detail: '多台推理节点 VRAM 使用率 > 92%，碎片回收变慢。',
-        target: '推理舰队',
+        detail: '华北双池多台推理节点 VRAM 使用率 > 92%，碎片回收变慢。',
+        target: '推理舰队 · Pool-大兴 / Pool-滨海',
         source: 'Telemetry',
         metric: 'vram_util=93%',
         threshold: 'vram_util < 90%',
-        pool: '多池',
-        region: '全部园区',
+        pool: 'Pool-大兴',
+        region: '北京大兴',
         impact: '新推理副本启动变慢',
         suggestion: '触发模型卸载或扩容单卡副本。',
         count: 12,
@@ -576,19 +595,19 @@ export function Alerts() {
         kind: 'schedule',
         status: 'firing',
         title: '低优任务即将被抢占',
-        detail: '高优推理突发到来，Over-quota 任务可能在 5 分钟内回收。',
-        target: 'scheduler',
+        detail: `高优推理突发到来，候选：${preemptTargets.join('、') || '无可抢占 Over-quota 任务'}。`,
+        target: preemptTargets[0] ?? 'scheduler',
         source: 'Preemption',
-        metric: 'preempt_candidates=4',
+        metric: `preempt_candidates=${Math.max(preemptTargets.length, 1)}`,
         threshold: '—',
         pool: '全局',
         region: '全部园区',
-        impact: '4 个低优训练将被中断',
+        impact: `${Math.max(preemptTargets.length, 1)} 个低优任务可能被中断`,
         suggestion: '通知项目负责人，或按策略调整任务优先级。',
-        count: 4,
+        count: Math.max(preemptTargets.length, 1),
         ts: now - 15 * 60_000,
         durationSec: 15 * 60,
-        action: { label: '查看队列', to: '/queues' },
+        action: { label: '打开调度队列', to: '/queues' },
       },
       {
         id: 'catalog-audit',
@@ -596,19 +615,19 @@ export function Alerts() {
         kind: 'schedule',
         status: 'resolved',
         title: '配额调整已生效',
-        detail: '大语言模型研发部 Guaranteed Quota 调整为 256 GPU。',
-        target: '大语言模型研发部',
+        detail: 'LLM 预训练平台 Guaranteed Quota 调整为 192 GPU。',
+        target: 'LLM 预训练平台',
         source: 'Audit Trail',
-        metric: 'guaranteed=256',
+        metric: 'guaranteed=192',
         threshold: '—',
         pool: '跨池',
         region: '基础模型事业部',
-        impact: '高优通道容量提升',
+        impact: '高优通道容量对齐部门配额',
         suggestion: '无需处理，可在审计中回看变更。',
         count: 1,
         ts: now - 150 * 60_000,
         durationSec: 5 * 60,
-        action: { label: '调度策略', to: '/policies' },
+        action: { label: '审计日志', to: '/audit' },
       },
       {
         id: 'catalog-power-shift',
@@ -616,14 +635,14 @@ export function Alerts() {
         kind: 'power',
         status: 'resolved',
         title: '绿电迁移完成',
-        detail: '已将 3 组可抢占任务迁移至新疆光伏关联节点池。',
-        target: 'Pool-West-02',
+        detail: '已将 3 组可抢占任务迁移至 Pool-哈密（新疆园区光伏接入）。',
+        target: 'Pool-哈密',
         source: 'Energy Scheduler',
         metric: 'migrated_jobs=3',
         threshold: '—',
-        pool: 'Pool-West-02',
+        pool: 'Pool-哈密',
         region: '新疆哈密',
-        impact: '绿电占比提升约 2.1%',
+        impact: '目标池绿电路由权重提升',
         suggestion: '持续观察目标池温度与 RDMA。',
         count: 3,
         ts: now - 180 * 60_000,
@@ -643,9 +662,19 @@ export function Alerts() {
     })
   }, [state])
 
+  const liveAlerts = useMemo(
+    () =>
+      alerts.map((item) => {
+        if (resolvedIds.has(item.id)) return { ...item, status: 'resolved' as const }
+        if (ackIds.has(item.id) && item.status === 'firing') return { ...item, status: 'acked' as const }
+        return item
+      }),
+    [ackIds, alerts, resolvedIds],
+  )
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return alerts.filter((a) => {
+    return liveAlerts.filter((a) => {
       if (severity !== 'all' && a.severity !== severity) return false
       if (kind !== 'all' && a.kind !== kind) return false
       if (status !== 'all' && a.status !== status) return false
@@ -658,24 +687,24 @@ export function Alerts() {
         a.source.toLowerCase().includes(q)
       )
     })
-  }, [alerts, severity, kind, status, query])
+  }, [liveAlerts, severity, kind, status, query])
 
   const selected = filtered.find((a) => a.id === selectedId) ?? filtered[0] ?? null
 
   const counts = {
-    total: alerts.length,
-    critical: alerts.filter((a) => a.severity === 'critical').length,
-    warning: alerts.filter((a) => a.severity === 'warning').length,
-    info: alerts.filter((a) => a.severity === 'info').length,
-    firing: alerts.filter((a) => a.status === 'firing').length,
-    acked: alerts.filter((a) => a.status === 'acked').length,
-    resolved: alerts.filter((a) => a.status === 'resolved').length,
+    total: liveAlerts.length,
+    critical: liveAlerts.filter((a) => a.severity === 'critical').length,
+    warning: liveAlerts.filter((a) => a.severity === 'warning').length,
+    info: liveAlerts.filter((a) => a.severity === 'info').length,
+    firing: liveAlerts.filter((a) => a.status === 'firing').length,
+    acked: liveAlerts.filter((a) => a.status === 'acked').length,
+    resolved: liveAlerts.filter((a) => a.status === 'resolved').length,
   }
 
   const byKind = (Object.keys(KIND_LABEL) as AlertKind[]).map((key) => ({
     key,
     label: KIND_LABEL[key],
-    value: alerts.filter((a) => a.kind === key).length,
+    value: liveAlerts.filter((a) => a.kind === key).length,
   }))
 
   return (
@@ -695,7 +724,7 @@ export function Alerts() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索标题 / 对象 / 节点池 / 来源"
-            className="h-9 w-[280px] rounded-full border border-border bg-white pl-9 pr-3 text-[12px] outline-none focus:border-[rgba(47,99,184,0.45)]"
+            className="h-9 w-[280px] rounded-lg border border-border bg-white pl-9 pr-3 text-[12px] shadow-[0_1px_2px_rgba(33,32,33,0.04)] outline-none focus:border-[rgba(47,99,184,0.45)]"
           />
         </div>
       </div>
@@ -841,77 +870,48 @@ export function Alerts() {
         </section>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {(
-          [
-            ['all', '全部级别'],
-            ['critical', '严重'],
-            ['warning', '警告'],
-            ['info', '提示'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setSeverity(id)}
-            className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
-              severity === id
-                ? 'border-[rgba(47,99,184,0.35)] bg-[#eef3fb] text-infer'
-                : 'border-border text-dim hover:text-text'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-        <span className="mx-1 h-5 w-px self-center bg-border" />
-        {(
-          [
-            ['all', '全部类型'],
-            ['gpu', 'GPU'],
-            ['node', '节点'],
-            ['network', '网络'],
-            ['quota', '配额'],
-            ['power', '算电'],
-            ['schedule', '调度'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setKind(id)}
-            className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
-              kind === id
-                ? 'border-[rgba(47,99,184,0.35)] bg-[#eef3fb] text-infer'
-                : 'border-border text-dim hover:text-text'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-        <span className="mx-1 h-5 w-px self-center bg-border" />
-        {(
-          [
-            ['all', '全部状态'],
-            ['firing', '触发中'],
-            ['acked', '已确认'],
-            ['resolved', '已恢复'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setStatus(id)}
-            className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
-              status === id
-                ? 'border-[rgba(47,99,184,0.35)] bg-[#eef3fb] text-infer'
-                : 'border-border text-dim hover:text-text'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <FilterSelect
+          label="级别"
+          size="sm"
+          value={severity}
+          onChange={(value) => setSeverity(value as typeof severity)}
+          options={[
+            { value: 'all', label: '全部级别' },
+            { value: 'critical', label: '严重' },
+            { value: 'warning', label: '警告' },
+            { value: 'info', label: '提示' },
+          ]}
+        />
+        <FilterSelect
+          label="类型"
+          size="sm"
+          value={kind}
+          onChange={(value) => setKind(value as typeof kind)}
+          options={[
+            { value: 'all', label: '全部类型' },
+            { value: 'gpu', label: 'GPU' },
+            { value: 'node', label: '节点' },
+            { value: 'network', label: '网络' },
+            { value: 'quota', label: '配额' },
+            { value: 'power', label: '算电' },
+            { value: 'schedule', label: '调度' },
+          ]}
+        />
+        <FilterSelect
+          label="状态"
+          size="sm"
+          value={status}
+          onChange={(value) => setStatus(value as typeof status)}
+          options={[
+            { value: 'all', label: '全部状态' },
+            { value: 'firing', label: '触发中' },
+            { value: 'acked', label: '已确认' },
+            { value: 'resolved', label: '已恢复' },
+          ]}
+        />
         <span className="ml-auto self-center text-[11px] text-dim">
-          显示 {filtered.length} / {alerts.length}
+          显示 {filtered.length} / {liveAlerts.length}
         </span>
       </div>
 
@@ -1021,7 +1021,7 @@ export function Alerts() {
                 <div className="mt-1 text-[12px] text-text">{selected.suggestion}</div>
               </div>
 
-              <div className="mt-auto flex gap-2 pt-4">
+              <div className="mt-auto flex flex-wrap gap-2 pt-4">
                 {selected.action && (
                   <button
                     type="button"
@@ -1031,12 +1031,33 @@ export function Alerts() {
                     {selected.action.label}
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="rounded-full border border-border px-3 py-2 text-[12px] text-muted hover:text-text"
-                >
-                  确认告警
-                </button>
+                {selected.status === 'firing' ? (
+                  <button
+                    type="button"
+                    onClick={() => setAckIds((prev) => new Set(prev).add(selected.id))}
+                    className="rounded-full border border-border px-3 py-2 text-[12px] text-muted hover:text-text"
+                  >
+                    确认告警
+                  </button>
+                ) : null}
+                {selected.status !== 'resolved' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResolvedIds((prev) => new Set(prev).add(selected.id))
+                      setAckIds((prev) => {
+                        const next = new Set(prev)
+                        next.delete(selected.id)
+                        return next
+                      })
+                    }}
+                    className="rounded-full border border-[rgba(47,99,184,0.22)] px-3 py-2 text-[12px] text-infer hover:bg-[#eef3fb]"
+                  >
+                    标记恢复
+                  </button>
+                ) : (
+                  <span className="rounded-full border border-border px-3 py-2 text-[12px] text-dim">已恢复</span>
+                )}
               </div>
               <div className="mt-2 font-mono text-[10px] text-dim">首次触发 · {formatTime(selected.ts)}</div>
             </>

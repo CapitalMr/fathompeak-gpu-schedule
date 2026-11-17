@@ -60,7 +60,7 @@ export function Energy() {
           <p className="mb-1 text-[12.5px] text-dim">资源</p>
           <h2 className="text-[28px] leading-none">算电协同</h2>
           <p className="mt-1.5 text-[13px] text-muted">
-            电站出力驱动节点池权重 · 绿电高峰优先调度可迁移任务
+            园区绿电接入配额驱动节点池权重 · 高峰窗口优先调度可迁移任务
           </p>
         </div>
         <button

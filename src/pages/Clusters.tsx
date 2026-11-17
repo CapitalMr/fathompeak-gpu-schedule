@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Crosshair, Server } from 'lucide-react'
+import {
+  ConfirmDialog,
+  Drawer,
+  FilterSelect,
+  GhostButton,
+  PrimaryButton,
+  StatusPill,
+} from '../components/console/ui'
+import { usePlatformScope } from '../platform/useScope'
 import { useApp } from '../store/AppContext'
+import type { ServerNode } from '../types'
 
 function slotColor(state: string) {
   if (state === 'infer') return 'bg-infer'
@@ -32,15 +42,16 @@ const SLOT_LEGEND = [
 ] as const
 
 export function Clusters() {
-  const { state, focusServer, focusPool } = useApp()
+  const { state, focusServer, focusPool, cordonServer, drainServer, offlineServer, markGpuFault } = useApp()
+  const { pools: scopedPools } = usePlatformScope()
   const navigate = useNavigate()
-  const [poolId, setPoolId] = useState(state.pools[0]?.id ?? '')
+  const [poolId, setPoolId] = useState(scopedPools[0]?.id ?? state.pools[0]?.id ?? '')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<{ type: 'drain' | 'offline'; server: ServerNode } | null>(null)
 
   useEffect(() => {
-    const matched = state.pools.find((p) => p.stationIds.includes(state.activeStationId))
-    if (matched) setPoolId(matched.id)
-  }, [state.activeStationId, state.pools])
+    if (!scopedPools.some((pool) => pool.id === poolId)) setPoolId(scopedPools[0]?.id ?? '')
+  }, [poolId, scopedPools])
 
   const pool = state.pools.find((p) => p.id === poolId) ?? state.pools[0]
   const servers = useMemo(
@@ -48,16 +59,18 @@ export function Clusters() {
     [state.servers, pool.id],
   )
   const stations = state.stations.filter((s) => pool.stationIds.includes(s.id))
+  const selected = selectedId ? servers.find((server) => server.id === selectedId) ?? null : null
 
   const summary = useMemo(() => {
     const gpus = servers.flatMap((s) => s.gpus)
     const fault = gpus.filter((g) => g.state === 'fault').length
     const busy = gpus.filter((g) => g.state !== 'idle' && g.state !== 'fault').length
+    const cordoned = servers.filter((s) => s.cordoned || s.nvlinkStatus === 'offline').length
     const avgTemp = servers.length
       ? Math.round(servers.reduce((n, s) => n + s.temperature, 0) / servers.length)
       : 0
     const powerKw = Math.round(servers.reduce((n, s) => n + s.powerW, 0) / 100) / 10
-    return { gpus: gpus.length, fault, busy, avgTemp, powerKw }
+    return { gpus: gpus.length, fault, busy, avgTemp, powerKw, cordoned }
   }, [servers])
 
   return (
@@ -67,34 +80,25 @@ export function Clusters() {
           <p className="mb-1 text-[12.5px] text-dim">资源</p>
           <h2 className="text-[28px] leading-none">节点</h2>
           <p className="mt-1.5 text-[13px] text-muted">
-            当前节点池 · 4/8/16/32 槽 · 同卡满配或合理混卡（如 H100+H200、昇腾 910B+910C、A800+A100）
+            支持 Cordon / Drain / 下线 / 故障卡标记。节点仍属于各自集群，这里按节点池运维。
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5 rounded-full bg-[rgba(61,49,79,0.06)] p-1">
-          {state.pools.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setPoolId(p.id)}
-              className={`rounded-full px-3.5 py-1.5 text-[12px] transition ${
-                pool.id === p.id
-                  ? 'bg-panel text-text shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
-                  : 'text-dim hover:text-text'
-              }`}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
+        <FilterSelect
+          label="节点池"
+          value={pool.id}
+          onChange={setPoolId}
+          options={scopedPools.map((item) => ({ value: item.id, label: `${item.name} · ${item.region}` }))}
+        />
       </div>
 
-      <div className="sheet grid grid-cols-2 overflow-hidden sm:grid-cols-5">
+      <div className="sheet grid grid-cols-2 overflow-hidden sm:grid-cols-6">
         {[
           { label: '服务器', value: String(servers.length), unit: '台一体机' },
           { label: 'GPU', value: String(summary.gpus), unit: `${summary.busy} 运行中` },
           { label: '平均温度', value: `${summary.avgTemp}°C`, unit: '机箱均温' },
           { label: '合计功耗', value: `${summary.powerKw}`, unit: 'kW' },
           { label: '故障卡', value: String(summary.fault), unit: '已摘除调度' },
+          { label: '不可调度', value: String(summary.cordoned), unit: 'Cordon/离线' },
         ].map((item, i) => (
           <div
             key={item.label}
@@ -114,7 +118,9 @@ export function Clusters() {
           <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
             <div>
               <div className="text-[14px] font-medium">{pool.label}</div>
-              <div className="mt-0.5 text-[12px] text-dim">{pool.region}</div>
+              <div className="mt-0.5 text-[12px] text-dim">
+                {pool.region} · {pool.status === 'Ready' ? '就绪' : pool.status === 'Draining' ? '排空中' : '已停用'}
+              </div>
             </div>
             <button
               type="button"
@@ -178,10 +184,10 @@ export function Clusters() {
           </div>
         </div>
         <div className="max-h-[calc(100vh-420px)] min-h-[280px] overflow-auto">
-          <table className="w-full min-w-[1100px] text-left text-xs">
+          <table className="w-full min-w-[1180px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-[rgba(248,248,248,0.92)] text-dim backdrop-blur">
               <tr>
-                {['主机名', 'IP', 'GPU 型号', '卡槽位', '状态', 'RDMA', '温度', '功耗', '操作'].map((h) => (
+                {['主机名', 'IP', 'GPU 型号', '卡槽位', '健康', '调度', 'RDMA', '温度', '功耗', '操作'].map((h) => (
                   <th key={h} className="border-b border-border px-3 py-2.5 font-medium">
                     {h}
                   </th>
@@ -192,6 +198,14 @@ export function Clusters() {
               {servers.map((s) => {
                 const active = selectedId === s.id
                 const slotN = s.gpus.length
+                const sched =
+                  s.nvlinkStatus === 'offline'
+                    ? '离线'
+                    : s.draining
+                      ? 'Drain'
+                      : s.cordoned
+                        ? 'Cordon'
+                        : '可调度'
                 return (
                   <tr
                     key={s.id}
@@ -236,23 +250,37 @@ export function Clusters() {
                     <td className={`px-3 py-2.5 font-medium ${statusTone(s.nvlinkStatus)}`}>
                       {statusLabel(s.nvlinkStatus)}
                     </td>
+                    <td className="px-3 py-2.5">
+                      <StatusPill tone={sched === '可调度' ? 'ok' : sched === '离线' ? 'bad' : 'warn'}>{sched}</StatusPill>
+                    </td>
                     <td className="px-3 py-2.5 font-mono text-muted">{s.rdmaGbps} Gbps</td>
                     <td className="px-3 py-2.5 font-mono text-muted">{s.temperature}°C</td>
-                    <td className="px-3 py-2.5 font-mono text-muted" title={`GPU ${s.powerW - (s.chassisBaseW || 0)}W + 机箱 ${s.chassisBaseW || 0}W`}>
+                    <td
+                      className="px-3 py-2.5 font-mono text-muted"
+                      title={`GPU ${s.powerW - (s.chassisBaseW || 0)}W + 机箱 ${s.chassisBaseW || 0}W`}
+                    >
                       {s.powerW >= 1000 ? `${(s.powerW / 1000).toFixed(1)} kW` : `${s.powerW} W`}
                     </td>
                     <td className="px-3 py-2.5">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          focusServer(s.id)
-                          navigate('/monitor')
-                        }}
-                        className="rounded-full border border-[rgba(47,99,184,0.28)] bg-[#eef3fb] px-2.5 py-1 text-[11px] font-medium text-infer hover:bg-[#e3ecfa]"
-                      >
-                        {slotN}卡透视
-                      </button>
+                      <div className="flex flex-wrap gap-1.5" onClick={(event) => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(s.id)}
+                          className="rounded-full border border-border px-2 py-1 text-[10px] text-muted hover:text-text"
+                        >
+                          管控
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            focusServer(s.id)
+                            navigate('/monitor')
+                          }}
+                          className="rounded-full border border-[rgba(47,99,184,0.28)] bg-[#eef3fb] px-2 py-1 text-[10px] font-medium text-infer hover:bg-[#e3ecfa]"
+                        >
+                          透视
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -261,6 +289,125 @@ export function Clusters() {
           </table>
         </div>
       </div>
+
+      {selected ? (
+        <Drawer
+          title={`节点管控 · ${selected.hostname}`}
+          onClose={() => setSelectedId(null)}
+          footer={
+            <>
+              <GhostButton onClick={() => setSelectedId(null)}>关闭</GhostButton>
+              <PrimaryButton
+                onClick={() => {
+                  focusServer(selected.id)
+                  navigate('/monitor')
+                }}
+              >
+                监控透视
+              </PrimaryButton>
+            </>
+          }
+        >
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[10px] text-dim">健康</div>
+                <div className="mt-1 text-[13px]">{statusLabel(selected.nvlinkStatus)}</div>
+              </div>
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[10px] text-dim">调度</div>
+                <div className="mt-1 text-[13px]">
+                  {selected.nvlinkStatus === 'offline'
+                    ? '离线'
+                    : selected.cordoned
+                      ? 'Cordon'
+                      : '可调度'}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[12px] font-medium text-text">生命周期</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-border px-3 py-1.5 text-[12px] text-muted hover:text-text"
+                  onClick={() => cordonServer(selected.id, !selected.cordoned)}
+                  disabled={selected.nvlinkStatus === 'offline'}
+                >
+                  {selected.cordoned ? 'Uncordon' : 'Cordon'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-border px-3 py-1.5 text-[12px] text-muted hover:text-text"
+                  onClick={() => setConfirm({ type: 'drain', server: selected })}
+                  disabled={selected.nvlinkStatus === 'offline'}
+                >
+                  Drain 驱逐
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-alert/30 px-3 py-1.5 text-[12px] text-alert"
+                  onClick={() => setConfirm({ type: 'offline', server: selected })}
+                >
+                  {selected.nvlinkStatus === 'offline' ? '重新上线' : '下线节点'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[12px] font-medium text-text">GPU 槽位</div>
+              <div className="space-y-2">
+                {selected.gpus.map((gpu) => (
+                  <div key={gpu.index} className="flex items-center justify-between rounded-xl border border-border px-3 py-2">
+                    <div>
+                      <div className="font-mono text-[12px] text-text">
+                        GPU{gpu.index} · {gpu.cardModel}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-dim">
+                        {gpu.state}
+                        {gpu.modelName ? ` · ${gpu.modelName}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`rounded-full border px-2.5 py-1 text-[11px] ${
+                        gpu.state === 'fault'
+                          ? 'border-[rgba(47,99,184,0.28)] bg-[#eef3fb] text-infer'
+                          : 'border-alert/25 text-alert'
+                      }`}
+                      onClick={() => markGpuFault(selected.id, gpu.index, gpu.state !== 'fault')}
+                    >
+                      {gpu.state === 'fault' ? '恢复' : '标故障'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Drawer>
+      ) : null}
+
+      {confirm ? (
+        <ConfirmDialog
+          title={confirm.type === 'drain' ? `Drain ${confirm.server.hostname}` : `${confirm.server.nvlinkStatus === 'offline' ? '上线' : '下线'} ${confirm.server.hostname}`}
+          message={
+            confirm.type === 'drain'
+              ? '将停止该节点上的运行中任务，并 Cordon 禁止新调度。适合滚动升级或维护窗口。'
+              : confirm.server.nvlinkStatus === 'offline'
+                ? '节点将重新加入调度域并恢复可调度。'
+                : '节点将退出调度域，运行中任务会被停止。'
+          }
+          confirmLabel={confirm.type === 'drain' ? '开始 Drain' : confirm.server.nvlinkStatus === 'offline' ? '上线' : '下线'}
+          danger={confirm.type === 'offline' && confirm.server.nvlinkStatus !== 'offline'}
+          onConfirm={() => {
+            if (confirm.type === 'drain') drainServer(confirm.server.id, true)
+            else offlineServer(confirm.server.id, confirm.server.nvlinkStatus !== 'offline')
+            setSelectedId(confirm.server.id)
+          }}
+          onClose={() => setConfirm(null)}
+        />
+      ) : null}
     </div>
   )
 }
