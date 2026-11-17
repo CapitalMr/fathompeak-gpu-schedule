@@ -67,7 +67,7 @@ export function Clusters() {
           <p className="mb-1 text-[12.5px] text-dim">资源</p>
           <h2 className="text-[28px] leading-none">节点</h2>
           <p className="mt-1.5 text-[13px] text-muted">
-            当前节点池 · 4/8/16/32 槽 · 同卡满配或合理混卡（如 RTX5090+4060、H100+H200、昇腾 910B+910C）
+            当前节点池 · 4/8/16/32 槽 · 同卡满配或合理混卡（如 H100+H200、昇腾 910B+910C、A800+A100）
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5 rounded-full bg-[rgba(61,49,79,0.06)] p-1">

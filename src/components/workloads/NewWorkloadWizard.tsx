@@ -30,22 +30,28 @@ const TYPES: Array<{
 
 const MODELS: Record<WorkloadType, Array<{ model: string; kind: Kind; gpuCount: number; label: string }>> = {
   Inference: [
-    { model: 'MiniMax-H3', kind: 'tp4', gpuCount: 4, label: 'RTX 5090 亲和 · TP4' },
-    { model: 'Qwen-7B-Chat', kind: 'single', gpuCount: 1, label: 'V100 / 入门卡 · Binpack' },
-    { model: 'Qwen2.5-14B', kind: 'single', gpuCount: 1, label: 'V100 / A100 · Binpack' },
-    { model: 'Llama-3-70B-Instruct', kind: 'tp4', gpuCount: 4, label: 'H100 / H200 · TP · NVLink' },
-    { model: 'DeepSeek-V4', kind: 'gang', gpuCount: 16, label: '昇腾 910B/C · Gang' },
-    { model: 'DeepSeek-V3-671B', kind: 'gang', gpuCount: 32, label: '昇腾 / 思元 / H200 · PP' },
-    { model: 'InternVL2-40B', kind: 'tp4', gpuCount: 4, label: '思元 590 亲和 · TP' },
-    { model: 'GLM-4-9B', kind: 'single', gpuCount: 1, label: 'RTX 5090 / H20 · Binpack' },
+    { model: 'DeepSeek-V3-671B', kind: 'gang', gpuCount: 32, label: '昇腾 / H200 · 满血 PP32' },
+    { model: 'DeepSeek-R1', kind: 'gang', gpuCount: 16, label: 'H200 / 昇腾 · 满血 PP16' },
+    { model: 'Qwen2.5-72B', kind: 'tp4', gpuCount: 8, label: 'H100 / H200 · 满血 TP8' },
+    { model: 'Qwen2.5-32B', kind: 'tp4', gpuCount: 8, label: 'A100 / A800 · 满血 TP8' },
+    { model: 'Qwen2.5-14B', kind: 'tp4', gpuCount: 4, label: 'A100 · 满血 TP4' },
+    { model: 'Qwen2.5-7B', kind: 'tp4', gpuCount: 2, label: 'A100 · 高并发 TP2' },
+    { model: 'Llama-3.1-70B-Instruct', kind: 'tp4', gpuCount: 8, label: 'H100 / H200 · 满血 TP8' },
+    { model: 'GLM-4-9B-Chat', kind: 'tp4', gpuCount: 4, label: 'H20 / A100 · 满血 TP4' },
+    { model: 'Qwen2-VL-72B', kind: 'tp4', gpuCount: 8, label: 'H100 · 多模态满血 TP8' },
+    { model: 'InternVL2-40B', kind: 'tp4', gpuCount: 8, label: '昇腾 / 思元 · 满血 TP8' },
+    { model: 'Whisper-Large-V3', kind: 'tp4', gpuCount: 2, label: 'A100 · ASR TP2' },
+    { model: 'BGE-M3', kind: 'tp4', gpuCount: 2, label: 'A100 · Embedding TP2' },
   ],
   Training: [
-    { model: 'Qwen2.5-14B-SFT', kind: 'tp4', gpuCount: 8, label: 'A800 / A100 · TP8' },
-    { model: 'Llama-3-70B-LoRA', kind: 'tp4', gpuCount: 4, label: 'H100 亲和 · LoRA TP4' },
+    { model: 'Qwen2.5-14B-SFT', kind: 'tp4', gpuCount: 8, label: 'A800 / A100 · 满血 TP8' },
+    { model: 'Llama-3-70B-LoRA', kind: 'tp4', gpuCount: 8, label: 'H100 · LoRA 满血 TP8' },
+    { model: 'DeepSeek-V3-SFT', kind: 'gang', gpuCount: 32, label: '昇腾 / H200 · SFT 满血' },
   ],
   Workspace: [
-    { model: 'InternVL2-Dev', kind: 'single', gpuCount: 1, label: 'RTX 4060 / V100 · 交互' },
-    { model: 'VSCode-MultiGPU', kind: 'tp4', gpuCount: 2, label: '混卡节点 · 2 GPU' },
+    { model: 'Llama-3.1-8B', kind: 'tp4', gpuCount: 2, label: 'A100 · 交互 TP2' },
+    { model: 'Qwen2.5-7B', kind: 'single', gpuCount: 1, label: 'A100 · 单卡调试' },
+    { model: 'VSCode-MultiGPU', kind: 'tp4', gpuCount: 4, label: '多卡开发 · TP4' },
   ],
 }
 

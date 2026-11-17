@@ -77,28 +77,27 @@ function inventorySkus(servers: ServerNode[], stationId: string): SkuState[] {
     }
   }
 
-  return SKU_KIND_ORDER.filter((kind) => buckets[kind].total > 0 || profile.skus.some((item) => resolveSkuKind(item.title) === kind)).map(
-    (kind, index) => {
-      const live = buckets[kind]
-      const fallback = profile.skus.find((item) => resolveSkuKind(item.title) === kind)
-      const total = live.total || fallback?.total || 0
-      const request = Math.min(total, live.total ? live.request : fallback?.request ?? 0)
-      const used = Math.min(request, live.total ? live.used : fallback?.used ?? 0)
-      return {
-        id: kind,
-        title: GPU_SPECS[kind].title,
-        kind,
-        total,
-        request,
-        used,
-        requestMax: Math.max(request, fallback?.requestMax ?? request),
-        usedMax: Math.max(used, fallback?.usedMax ?? used),
-        ...toneColors(kind),
-        requestHist: walkSeries(request, Math.max(request, fallback?.requestMax ?? request), total, DEMO_DEPTH, index * 5),
-        usedHist: walkSeries(used, Math.max(used, fallback?.usedMax ?? used), total, DEMO_DEPTH, index * 5 + 2),
-      }
-    },
-  )
+  // 有真实节点时只展示本站出现的卡型，避免空图占位留白
+  return SKU_KIND_ORDER.filter((kind) => buckets[kind].total > 0).map((kind, index) => {
+    const live = buckets[kind]
+    const fallback = profile.skus.find((item) => resolveSkuKind(item.title) === kind)
+    const total = live.total
+    const request = Math.min(total, live.request)
+    const used = Math.min(request, live.used)
+    return {
+      id: kind,
+      title: GPU_SPECS[kind].title,
+      kind,
+      total,
+      request,
+      used,
+      requestMax: Math.max(request, fallback?.requestMax ?? request),
+      usedMax: Math.max(used, fallback?.usedMax ?? used),
+      ...toneColors(kind),
+      requestHist: walkSeries(request, Math.max(request, fallback?.requestMax ?? request), total, DEMO_DEPTH, index * 5),
+      usedHist: walkSeries(used, Math.max(used, fallback?.usedMax ?? used), total, DEMO_DEPTH, index * 5 + 2),
+    }
+  })
 }
 
 function gaugesFromServers(servers: ServerNode[], stationId: string): Gauges {
@@ -532,7 +531,8 @@ interface NodeSample {
 function sampleNode(server: ServerNode, t: number, tempBias = 0): NodeSample {
   const gpus = server.gpus
   const temp = gpus.length ? gpus.reduce((sum, gpu) => sum + gpu.temperature, 0) / gpus.length : server.temperature
-  const mem = gpus.length ? (gpus.reduce((sum, gpu) => sum + gpu.memoryUsedGb, 0) / (gpus.length * 80)) * 100 : 0
+  const memCap = gpus.reduce((sum, gpu) => sum + gpu.memoryTotalGb, 0) || 1
+  const mem = gpus.length ? (gpus.reduce((sum, gpu) => sum + gpu.memoryUsedGb, 0) / memCap) * 100 : 0
   const util = gpus.length ? gpus.reduce((sum, gpu) => sum + gpu.utilization, 0) / gpus.length : 0
   const wave = Math.sin(t / 4500 + server.rackCol * 0.7) * 2.4 + Math.sin(t / 11000) * 1.2
   return {

@@ -1,4 +1,5 @@
 import type { ServerNode, Workload } from '../../types'
+import { specForModel } from '../monitor/gpuSpecs'
 
 export type FlowScene = 'A' | 'B' | 'C'
 
@@ -10,7 +11,7 @@ export const SCENE_COLOR: Record<FlowScene, string> = {
 
 export const SCENE_TITLE: Record<FlowScene, string> = {
   A: '单卡推理调度',
-  B: '单机 NVLink 协同',
+  B: '单机卡间互联协同',
   C: '跨中心多机 RDMA',
 }
 
@@ -47,7 +48,7 @@ export function flowScene(workload: Workload): FlowScene {
 
 export function strategyTag(workload: Workload) {
   if (workload.strategy === 'pp' || workload.allocations.length > 1 || workload.gpuCount > 8) return 'Gang 成组调度'
-  if (workload.strategy === 'tp' || workload.gpuCount > 1) return 'NVLink 亲和性'
+  if (workload.strategy === 'tp' || workload.gpuCount > 1) return '同型号互联亲和'
   return 'Binpack 装箱'
 }
 
@@ -76,68 +77,34 @@ export interface ChassisModel {
 }
 
 function boardMeta(gpuModel?: string, cardModels?: string[]) {
+  const slotN = cardModels?.length || 8
   const label = gpuModel || (cardModels?.length ? cardModels.join(' + ') : '')
-  const text = label.toLowerCase()
-  if (text.includes('+') || text.includes('×')) {
-    const primary = cardModels?.[0] ?? label
-    const primaryText = primary.toLowerCase()
-    const fabric =
-      primaryText.includes('910') || primaryText.includes('ascend') || primaryText.includes('昇腾')
-        ? { fabricLabel: 'HCCS', fabricPeakGBs: 392 }
-        : primaryText.includes('mlu') || primaryText.includes('思元') || primaryText.includes('寒武纪')
-          ? { fabricLabel: 'MLU-Link', fabricPeakGBs: 300 }
-          : primaryText.includes('深算') || primaryText.includes('hygon') || primaryText.includes('dcu')
-            ? { fabricLabel: 'xGMI', fabricPeakGBs: 200 }
-            : primaryText.includes('br104') || primaryText.includes('壁仞')
-              ? { fabricLabel: 'BR-Link', fabricPeakGBs: 256 }
-              : primaryText.includes('5090') || primaryText.includes('4060') || primaryText.includes('pcie')
-                ? { fabricLabel: 'PCIe', fabricPeakGBs: 0 }
-                : { fabricLabel: 'NVLink', fabricPeakGBs: 900 }
-    return { boardLabel: label, ...fabric, memCap: 80 }
+  const primary = cardModels?.[0] ?? label
+  const text = (primary || label).toLowerCase()
+  const mixed = Boolean(gpuModel?.includes('+') || gpuModel?.includes('×') || (cardModels && new Set(cardModels).size > 1))
+
+  const fabricOf = (t: string) => {
+    if (t.includes('910') || t.includes('ascend') || t.includes('昇腾')) return { fabricLabel: 'HCCS', fabricPeakGBs: 392 }
+    if (t.includes('mlu') || t.includes('思元') || t.includes('寒武纪')) return { fabricLabel: 'MLU-Link', fabricPeakGBs: 300 }
+    if (t.includes('5090') || t.includes('4060') || t.includes('pcie')) return { fabricLabel: 'PCIe', fabricPeakGBs: 0 }
+    return { fabricLabel: 'NVLink', fabricPeakGBs: 900 }
   }
-  if (text.includes('910c')) {
-    return { boardLabel: '昇腾 910C · 8× 64GB', fabricLabel: 'HCCS', fabricPeakGBs: 392, memCap: 64 }
+
+  if (mixed) {
+    const memCap = cardModels?.length
+      ? Math.round(cardModels.reduce((n, m) => n + (specForModel(m).memoryGb || 80), 0) / cardModels.length)
+      : 80
+    return { boardLabel: label || `${slotN} 槽混卡`, ...fabricOf(text), memCap }
   }
-  if (text.includes('910b') || text.includes('ascend') || text.includes('昇腾')) {
-    return { boardLabel: '昇腾 910B · 8× 64GB', fabricLabel: 'HCCS', fabricPeakGBs: 392, memCap: 64 }
+
+  const spec = specForModel(primary || 'h100')
+  const short = spec.short
+  return {
+    boardLabel: `${short} · ${slotN}× ${spec.memoryGb}GB`,
+    fabricLabel: spec.fabricName,
+    fabricPeakGBs: spec.nvlinkPeakGBs,
+    memCap: spec.memoryGb,
   }
-  if (text.includes('mlu590') || text.includes('思元') || text.includes('寒武纪')) {
-    return { boardLabel: '思元 590 · 8× 48GB', fabricLabel: 'MLU-Link', fabricPeakGBs: 300, memCap: 48 }
-  }
-  if (text.includes('深算') || text.includes('hygon') || text.includes('dcu') || text.includes('海光')) {
-    return { boardLabel: '海光深算二号 · 8× 32GB', fabricLabel: 'xGMI', fabricPeakGBs: 200, memCap: 32 }
-  }
-  if (text.includes('br104') || text.includes('壁仞')) {
-    return { boardLabel: 'BR104 · 8× 32GB', fabricLabel: 'BR-Link', fabricPeakGBs: 256, memCap: 32 }
-  }
-  if (text.includes('5090') && text.includes('4060')) {
-    return { boardLabel: 'RTX 5090×4 + RTX 4060×4', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 32 }
-  }
-  if (text.includes('5090')) {
-    return { boardLabel: 'RTX 5090 · 8× 32GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 32 }
-  }
-  if (text.includes('4060')) {
-    return { boardLabel: 'RTX 4060 · 8× 8GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 8 }
-  }
-  if (text.includes('h200')) {
-    return { boardLabel: 'HGX H200 · 8× 141GB', fabricLabel: 'NVLink', fabricPeakGBs: 900, memCap: 141 }
-  }
-  if (text.includes('h20')) {
-    return { boardLabel: 'HGX H20 · 8× 96GB', fabricLabel: 'NVLink', fabricPeakGBs: 900, memCap: 96 }
-  }
-  if (text.includes('v100')) {
-    return { boardLabel: 'DGX V100 · 8× 32GB', fabricLabel: 'NVLink', fabricPeakGBs: 300, memCap: 32 }
-  }
-  if (text.includes('a800')) {
-    return { boardLabel: 'HGX A800 · 8× 80GB', fabricLabel: 'NVLink', fabricPeakGBs: 400, memCap: 80 }
-  }
-  if (text.includes('a100') && text.includes('pcie')) {
-    return { boardLabel: 'A100-PCIe · 8× 80GB', fabricLabel: 'PCIe', fabricPeakGBs: 0, memCap: 80 }
-  }
-  if (text.includes('a100')) {
-    return { boardLabel: 'HGX A100 · 8× 80GB', fabricLabel: 'NVLink', fabricPeakGBs: 600, memCap: 80 }
-  }
-  return { boardLabel: 'HGX H100 · 8× HBM3', fabricLabel: 'NVLink', fabricPeakGBs: 900, memCap: 80 }
 }
 
 export function buildChassis(workload: Workload, servers: ServerNode[], tick: number): ChassisModel[] {

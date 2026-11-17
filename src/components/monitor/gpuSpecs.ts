@@ -320,7 +320,6 @@ export const SKU_KIND_ORDER: SkuKind[] = [
   'a100pcie',
   'v100',
   'rtx5090',
-  'rtx4060',
   'ascend910b',
   'ascend910c',
   'mlu590',
@@ -335,7 +334,6 @@ export type ChassisLayout = { kind: SkuKind; count: number }[]
 export const HOMOGENEOUS_LAYOUTS: ChassisLayout[] = [
   // 4 槽 · PCIe 工作站 / 入门推理箱
   [{ kind: 'rtx5090', count: 4 }],
-  [{ kind: 'rtx4060', count: 4 }],
   [{ kind: 'a100pcie', count: 4 }],
   [{ kind: 'v100', count: 4 }],
   // 8 槽 · 数据中心整机
@@ -365,19 +363,6 @@ export const HOMOGENEOUS_LAYOUTS: ChassisLayout[] = [
  * 禁止：NVIDIA↔昇腾/思元跨栈、SXM↔PCIe 硬拼、跨代 NVLink 域混插
  */
 export const MIXED_LAYOUTS: ChassisLayout[] = [
-  // GeForce PCIe 工作站：主力推理 + 轻量辅卡（功耗/供电同域）
-  [
-    { kind: 'rtx5090', count: 4 },
-    { kind: 'rtx4060', count: 4 },
-  ],
-  [
-    { kind: 'rtx5090', count: 2 },
-    { kind: 'rtx4060', count: 2 },
-  ],
-  [
-    { kind: 'rtx5090', count: 6 },
-    { kind: 'rtx4060', count: 2 },
-  ],
   // Hopper HGX 同代演进：显存升级半柜刷新（同 NVLink 域）
   [
     { kind: 'h100', count: 4 },
@@ -419,23 +404,29 @@ export function isMixedLayout(layout: ChassisLayout) {
   return layout.length > 1
 }
 
-/** 模型 → 优先卡型（调度亲和，均选取可跑对应开源/商用权重的主流卡） */
+/** 模型 → 优先卡型（主流开源模型 × 可跑通卡型） */
 export const MODEL_GPU_AFFINITY: Record<string, SkuKind[]> = {
-  'MiniMax-H3': ['rtx5090', 'h20', 'h100'],
-  'MiniMax-M2': ['rtx5090', 'rtx4060', 'h20'],
-  'Qwen-7B-Chat': ['v100', 'rtx4060', 'a100pcie'],
-  'Qwen2.5-14B': ['v100', 'a100pcie', 'a800'],
-  'Qwen2.5-32B': ['a100sxm', 'a800', 'h20'],
+  'DeepSeek-V3-671B': ['ascend910c', 'ascend910b', 'h200'],
+  'DeepSeek-R1': ['h200', 'h100', 'ascend910c'],
+  'DeepSeek-V3-SFT': ['ascend910c', 'ascend910b', 'h200'],
   'Qwen2.5-72B': ['h100', 'h200', 'h20'],
+  'Qwen2.5-32B': ['a100sxm', 'a800', 'h20'],
+  'Qwen2.5-14B': ['a100pcie', 'a800', 'v100'],
+  'Qwen2.5-7B': ['a100pcie', 'v100', 'rtx5090'],
   'Qwen2.5-14B-SFT': ['a800', 'a100sxm', 'h20'],
+  'Qwen2.5-14B-LoRA': ['a100pcie', 'a800', 'rtx5090'],
+  'Qwen2-VL-72B': ['h100', 'h200', 'a100sxm'],
+  'Llama-3.1-70B-Instruct': ['h100', 'h200', 'a100sxm'],
   'Llama-3-70B-Instruct': ['h100', 'h200', 'a100sxm'],
-  'DeepSeek-V4': ['ascend910c', 'ascend910b', 'mlu590'],
-  'DeepSeek-V3-671B': ['ascend910c', 'ascend910b', 'h200', 'h100'],
-  'InternVL2-40B': ['mlu590', 'ascend910b', 'a800'],
-  'InternVL2-Dev': ['rtx4060', 'rtx5090', 'v100'],
-  'Whisper-Large-V3': ['rtx4060', 'v100', 'a100pcie'],
-  'BGE-M3': ['rtx4060', 'v100', 'a100pcie'],
-  'GLM-4-9B': ['rtx5090', 'h20', 'a100pcie'],
+  'Llama-3-70B-LoRA': ['h100', 'h200', 'a100sxm'],
+  'Llama-3.1-8B': ['a100pcie', 'v100', 'rtx5090'],
+  'GLM-4-9B-Chat': ['h20', 'a100pcie', 'rtx5090'],
+  'InternVL2-40B': ['mlu590', 'ascend910b', 'ascend910c'],
+  'InternVL2-26B': ['a800', 'a100sxm', 'mlu590'],
+  'Whisper-Large-V3': ['a100pcie', 'v100', 'rtx5090'],
+  'BGE-M3': ['a100pcie', 'v100', 'rtx5090'],
+  'BGE-M3-Rerank': ['a100pcie', 'v100', 'rtx5090'],
+  'VSCode-MultiGPU': ['rtx5090', 'a100pcie', 'v100'],
 }
 
 export function resolveSkuKind(gpuModel: string): SkuKind {
@@ -449,7 +440,8 @@ export function resolveSkuKind(gpuModel: string): SkuKind {
   if (text.includes('深算') || text.includes('hygon') || text.includes('dcu') || text.includes('海光')) return 'mlu590'
   if (text.includes('br104') || text.includes('壁仞') || text.includes('biren')) return 'mlu590'
   if (text.includes('5090')) return 'rtx5090'
-  if (text.includes('4060')) return 'rtx4060'
+  // 4060 已下线展示，归并到 5090 避免监控出现独立卡型
+  if (text.includes('4060')) return 'rtx5090'
   if (text.includes('h200')) return 'h200'
   if (text.includes('h20')) return 'h20'
   if (text.includes('h100')) return 'h100'
@@ -475,10 +467,10 @@ export function supportsFp8(kind: SkuKind) {
 export function preferredSkusForModel(model: string): SkuKind[] {
   if (MODEL_GPU_AFFINITY[model]) return MODEL_GPU_AFFINITY[model]
   const lower = model.toLowerCase()
-  if (lower.includes('minimax') || lower.includes('glm')) return ['rtx5090', 'h20', 'h100']
-  if (lower.includes('deepseek') || lower.includes('昇腾')) return ['ascend910c', 'ascend910b', 'mlu590']
-  if (lower.includes('qwen') || lower.includes('千问')) return ['v100', 'a100pcie', 'a800']
+  if (lower.includes('deepseek') || lower.includes('昇腾')) return ['ascend910c', 'ascend910b', 'h200']
+  if (lower.includes('qwen') || lower.includes('千问')) return ['h100', 'a100pcie', 'a800']
   if (lower.includes('llama')) return ['h100', 'h200', 'a100sxm']
+  if (lower.includes('glm') || lower.includes('internvl')) return ['h20', 'a800', 'mlu590']
   return ['h100', 'a800', 'a100sxm']
 }
 

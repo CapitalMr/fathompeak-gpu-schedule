@@ -214,8 +214,8 @@ export const POLICIES: PolicyFlag[] = [
   },
   {
     id: 'pol-nvlink',
-    name: 'NVLink 亲和性拓扑感知',
-    description: '单机多卡任务优先调度至 NVLink 全互联拓扑完整的节点',
+    name: '卡间互联亲和拓扑感知',
+    description: '单机多卡任务优先调度至 NVLink / HCCS / MLU-Link 拓扑完整且同型号的节点',
     enabled: true,
   },
   {
@@ -257,78 +257,24 @@ function pickChassisLayout(seed: number) {
   return pool[Math.min(idx, pool.length - 1)]
 }
 
-/** 按卡型挑一个亲和模型，用于初始占位负载 */
-function pickAffinityModel(cardModel: string, seed: number): string {
-  const kind = resolveSkuKind(cardModel)
-  const catalog: Array<{ model: string; kinds: SkuKind[] }> = [
-    { model: 'MiniMax-H3', kinds: ['rtx5090', 'h20', 'h100'] },
-    { model: 'MiniMax-M2', kinds: ['rtx5090', 'rtx4060'] },
-    { model: 'Qwen-7B-Chat', kinds: ['v100', 'rtx4060', 'a100pcie'] },
-    { model: 'Qwen2.5-14B', kinds: ['v100', 'a100pcie', 'a800'] },
-    { model: 'Qwen2.5-72B', kinds: ['h100', 'h200', 'h20'] },
-    { model: 'Llama-3-70B-Instruct', kinds: ['h100', 'h200', 'a100sxm'] },
-    { model: 'DeepSeek-V4', kinds: ['ascend910c', 'ascend910b', 'mlu590'] },
-    { model: 'DeepSeek-V3-671B', kinds: ['ascend910c', 'ascend910b', 'h200'] },
-    { model: 'InternVL2-40B', kinds: ['mlu590', 'ascend910b', 'a800'] },
-    { model: 'Whisper-Large-V3', kinds: ['rtx4060', 'v100', 'a100pcie'] },
-    { model: 'BGE-M3', kinds: ['rtx4060', 'v100', 'a100pcie'] },
-    { model: 'GLM-4-9B', kinds: ['rtx5090', 'h20', 'a100pcie'] },
-  ]
-  const matched = catalog.filter((item) => item.kinds.includes(kind))
-  const pool = matched.length ? matched : catalog
-  return pool[Math.floor(seeded(seed) * pool.length) % pool.length].model
-}
-
 function makeGpu(index: number, seed: number, cardModel: string): GpuSlot {
   const spec = gpuSpec(cardModel)
   const memCap = spec.memoryGb
-  const r = seeded(seed + index * 17)
-  let state: GpuState = 'idle'
-  let memoryUsedGb = Math.round(1.2 + seeded(seed + index) * 3)
-  let utilization = Math.round(seeded(seed + index * 3) * 8)
-  let modelName: string | undefined
-  let workloadId: string | undefined
-
-  if (r > 0.72) {
-    state = 'infer'
-    memoryUsedGb = Math.round(memCap * (0.22 + seeded(seed + index * 5) * 0.35))
-    utilization = 55 + Math.round(seeded(seed + index * 7) * 35)
-    modelName = pickAffinityModel(cardModel, seed + index * 9)
-  } else if (r > 0.88) {
-    state = 'multi'
-    memoryUsedGb = Math.round(memCap * (0.55 + seeded(seed + index * 11) * 0.35))
-    utilization = 70 + Math.round(seeded(seed + index * 13) * 25)
-    modelName = pickAffinityModel(cardModel, seed + index * 31)
-  }
-
-  if (seeded(seed + index * 19) > 0.992) {
-    state = 'fault'
-    memoryUsedGb = 0
-    utilization = 0
-    modelName = undefined
-  }
-
-  const idle = spec.idleW - 15 + Math.round(seeded(seed + index) * 30)
-  const powerW =
-    state === 'idle' || state === 'fault'
-      ? idle
-      : Math.min(spec.tdpW, Math.round(idle + (utilization / 100) * (spec.tdpW - idle) + seeded(seed + index * 23) * 20))
-  const temperature =
-    state === 'idle' || state === 'fault'
-      ? 36 + Math.round(seeded(seed + index) * 6)
-      : Math.round(36 + (utilization / 100) * 42 + seeded(seed + index) * 4)
+  // 初始仅空闲/极少数故障；忙碌态一律由 seedInitialWorkloads / allocateGpus 写入，避免「幽灵占用」
+  const fault = seeded(seed + index * 19) > 0.994
+  const memoryUsedGb = fault ? 0 : Math.round(1.2 + seeded(seed + index) * 2.5)
+  const utilization = fault ? 0 : Math.round(seeded(seed + index * 3) * 6)
+  const idlePower = Math.max(8, spec.idleW - 12 + Math.round(seeded(seed + index) * 20))
 
   return {
     index,
     cardModel,
-    state,
+    state: fault ? 'fault' : 'idle',
     memoryUsedGb: Math.min(memoryUsedGb, memCap - 2),
     memoryTotalGb: memCap,
     utilization,
-    temperature,
-    powerW,
-    modelName,
-    workloadId,
+    temperature: fault ? 42 + Math.round(seeded(seed + index) * 8) : 36 + Math.round(seeded(seed + index) * 6),
+    powerW: fault ? 0 : idlePower,
   }
 }
 
@@ -360,7 +306,8 @@ export function buildServers(): ServerNode[] {
         rackCol: col,
         gpuModel,
         gpus,
-        nvlinkStatus: seeded(seed + 50) > 0.97 ? 'degraded' : 'healthy',
+        nvlinkStatus:
+          seeded(seed + 50) > 0.995 ? 'offline' : seeded(seed + 50) > 0.97 ? 'degraded' : 'healthy',
         rdmaGbps: seeded(seed + 61) > 0.35 ? 400 : 200,
         temperature: Math.round(gpus.reduce((sum, gpu) => sum + gpu.temperature, 0) / gpus.length),
         chassisBaseW,
@@ -458,7 +405,7 @@ function allocateGpus(
     for (const poolId of poolOrder) {
       const candidates = servers.filter((s) => s.poolId === poolId).sort(sortByAffinity)
       for (const server of candidates) {
-        // 优先同型号空闲卡（混卡节点上保证 TP 亲和）
+        // TP 必须同型号：禁止混卡异构 fallback
         const byKind = new Map<SkuKind, number[]>()
         server.gpus
           .filter((g) => g.state === 'idle')
@@ -477,6 +424,16 @@ function allocateGpus(
           }
         }
         if (!chosen) {
+          // 同机其它同型号也可（仍禁止跨型号拼 TP）
+          for (const kind of preferred.length ? preferred : [...byKind.keys()]) {
+            const list = byKind.get(kind)
+            if (list && list.length >= count) {
+              chosen = list.slice(0, count)
+              break
+            }
+          }
+        }
+        if (!chosen) {
           for (const list of byKind.values()) {
             if (list.length >= count) {
               chosen = list.slice(0, count)
@@ -484,11 +441,7 @@ function allocateGpus(
             }
           }
         }
-        if (!chosen) {
-          const freeIndices = server.gpus.filter((g) => g.state === 'idle').map((g) => g.index)
-          if (freeIndices.length < count) continue
-          chosen = freeIndices.slice(0, count)
-        }
+        if (!chosen) continue
         chosen.forEach((gi) => {
           const gpu = server.gpus[gi]
           const util = 75 + Math.round(Math.random() * 20)
@@ -507,47 +460,63 @@ function allocateGpus(
     }
   }
 
-  // Gang / PP: 按实际槽位数整机锁定，直到凑满 gpuCount
+  // Gang / PP：同厂商 + 同互联域整机装箱；不够则放弃（不静默抢占清盘）
   const nodeScore = (s: ServerNode) =>
     s.gpus.reduce((n, g) => n + affinityScore(g.cardModel, preferred), 0) / Math.max(1, s.gpus.length)
+  const nodeVendor = (s: ServerNode) => GPU_SPECS[resolveSkuKind(s.gpus[0]?.cardModel ?? 'h100')].vendor
+  const nodeFabric = (s: ServerNode) => GPU_SPECS[resolveSkuKind(s.gpus[0]?.cardModel ?? 'h100')].fabricName
+  const preferredVendors = new Set(preferred.map((k) => GPU_SPECS[k].vendor))
+
+  const idleCandidates = poolOrder
+    .flatMap((poolId) =>
+      servers.filter(
+        (s) =>
+          s.poolId === poolId &&
+          s.gpus.every((g) => g.state === 'idle') &&
+          (preferredVendors.size === 0 || preferredVendors.has(nodeVendor(s))),
+      ),
+    )
+    .sort((a, b) => nodeScore(b) - nodeScore(a) || b.gpus.length - a.gpus.length)
+
+  const seed = idleCandidates[0]
+  if (!seed) return allocations
+
+  const vendor = nodeVendor(seed)
+  const fabric = nodeFabric(seed)
+  const pool = idleCandidates.filter((s) => nodeVendor(s) === vendor && nodeFabric(s) === fabric)
   const picked: ServerNode[] = []
   let allocatedSlots = 0
-  for (const poolId of poolOrder) {
-    const idleNodes = servers
-      .filter((s) => s.poolId === poolId && s.gpus.every((g) => g.state === 'idle'))
-      .sort((a, b) => nodeScore(b) - nodeScore(a) || b.gpus.length - a.gpus.length)
-    for (const server of idleNodes) {
-      picked.push(server)
-      allocatedSlots += server.gpus.length
-      if (allocatedSlots >= count) break
-    }
-    if (allocatedSlots >= count) break
+  const used = new Set<string>()
+
+  while (allocatedSlots < count) {
+    const remaining = count - allocatedSlots
+    const next = pool
+      .filter((s) => !used.has(s.id))
+      .sort((a, b) => {
+        const aOver = a.gpus.length > remaining ? 1 : 0
+        const bOver = b.gpus.length > remaining ? 1 : 0
+        if (aOver !== bOver) return aOver - bOver
+        if (!aOver && !bOver) {
+          // 不超配时优先更大整机，减少跨机跳数
+          return b.gpus.length - a.gpus.length || nodeScore(b) - nodeScore(a)
+        }
+        // 不得不超配时选浪费最少的
+        return a.gpus.length - b.gpus.length || nodeScore(b) - nodeScore(a)
+      })[0]
+    if (!next) break
+    used.add(next.id)
+    picked.push(next)
+    allocatedSlots += next.gpus.length
   }
 
-  if (allocatedSlots < count) {
-    const rest = servers
-      .filter((s) => !picked.includes(s))
-      .sort(
-        (a, b) =>
-          nodeScore(b) - nodeScore(a) ||
-          a.gpus.filter((g) => g.state !== 'idle').length - b.gpus.filter((g) => g.state !== 'idle').length,
-      )
-    while (allocatedSlots < count && rest.length) {
-      const s = rest.shift()!
-      s.gpus.forEach((g) => {
-        g.state = 'idle'
-        g.workloadId = undefined
-        g.modelName = undefined
-        g.memoryUsedGb = 2
-        g.utilization = 3
-      })
-      picked.push(s)
-      allocatedSlots += s.gpus.length
-    }
-  }
+  if (allocatedSlots < count) return allocations
 
+  let need = count
   picked.forEach((server) => {
-    server.gpus.forEach((g) => {
+    const take = Math.min(need, server.gpus.length)
+    const indices = server.gpus.slice(0, take).map((g) => g.index)
+    indices.forEach((gi) => {
+      const g = server.gpus[gi]
       const util = 82 + Math.round(Math.random() * 14)
       const cap = gpuSpec(g.cardModel).memoryGb
       applyGpuLoad(g, server, 'gang', model, workloadId, Math.round(cap * (0.7 + Math.random() * 0.22)), util)
@@ -557,8 +526,9 @@ function allocateGpus(
       poolId: server.poolId,
       serverId: server.id,
       hostname: server.hostname,
-      gpuIndices: server.gpus.map((g) => g.index),
+      gpuIndices: indices,
     })
+    need -= take
   })
 
   return allocations
@@ -715,67 +685,7 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
     createdBy?: string
   }> = [
     {
-      name: 'inf-minimax-h3-prod',
-      model: 'MiniMax-H3',
-      type: 'Inference',
-      projectId: 'proj-llm',
-      strategy: 'tp',
-      gpuCount: 4,
-      latencyMs: 44,
-      tokensPerSec: 92,
-      durationSec: 11200,
-      preferredPool: 'pool-east-01',
-    },
-    {
-      name: 'inf-qwen7b-chat-prod',
-      model: 'Qwen-7B-Chat',
-      type: 'Inference',
-      projectId: 'proj-agent',
-      strategy: 'single',
-      gpuCount: 1,
-      latencyMs: 38,
-      tokensPerSec: 86,
-      durationSec: 12640,
-      preferredPool: 'pool-east-01',
-    },
-    {
-      name: 'inf-qwen25-14b-api',
-      model: 'Qwen2.5-14B',
-      type: 'Inference',
-      projectId: 'proj-llm',
-      strategy: 'single',
-      gpuCount: 1,
-      latencyMs: 52,
-      tokensPerSec: 64,
-      durationSec: 8420,
-      preferredPool: 'pool-east-02',
-    },
-    {
-      name: 'inf-llama3-70b-tp4',
-      model: 'Llama-3-70B-Instruct',
-      type: 'Inference',
-      projectId: 'proj-llm',
-      strategy: 'tp',
-      gpuCount: 4,
-      latencyMs: 96,
-      tokensPerSec: 42,
-      durationSec: 15300,
-      preferredPool: 'pool-east-01',
-    },
-    {
-      name: 'inf-deepseek-v4-pp',
-      model: 'DeepSeek-V4',
-      type: 'Inference',
-      projectId: 'proj-llm',
-      strategy: 'pp',
-      gpuCount: 16,
-      latencyMs: 148,
-      tokensPerSec: 36,
-      durationSec: 8600,
-      preferredPool: 'pool-core-03',
-    },
-    {
-      name: 'inf-deepseek-v3-pp',
+      name: 'inf-deepseek-v3-full',
       model: 'DeepSeek-V3-671B',
       type: 'Inference',
       projectId: 'proj-llm',
@@ -784,9 +694,154 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       latencyMs: 186,
       tokensPerSec: 28,
       durationSec: 7200,
+      preferredPool: 'pool-core-03',
     },
     {
-      name: 'train-qwen25-sft',
+      name: 'inf-deepseek-r1-full',
+      model: 'DeepSeek-R1',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'pp',
+      gpuCount: 16,
+      latencyMs: 164,
+      tokensPerSec: 22,
+      durationSec: 8600,
+      preferredPool: 'pool-east-01',
+    },
+    {
+      name: 'inf-qwen25-72b-full',
+      model: 'Qwen2.5-72B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 96,
+      tokensPerSec: 42,
+      durationSec: 12800,
+      preferredPool: 'pool-east-01',
+    },
+    {
+      name: 'inf-qwen25-32b-full',
+      model: 'Qwen2.5-32B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 72,
+      tokensPerSec: 58,
+      durationSec: 10400,
+      preferredPool: 'pool-core-03',
+    },
+    {
+      name: 'inf-qwen25-14b-full',
+      model: 'Qwen2.5-14B',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 48,
+      tokensPerSec: 86,
+      durationSec: 9800,
+      preferredPool: 'pool-east-02',
+    },
+    {
+      name: 'inf-qwen25-7b-api',
+      model: 'Qwen2.5-7B',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 32,
+      tokensPerSec: 126,
+      durationSec: 14200,
+      preferredPool: 'pool-east-02',
+    },
+    {
+      name: 'inf-llama31-70b-full',
+      model: 'Llama-3.1-70B-Instruct',
+      type: 'Inference',
+      projectId: 'proj-llm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 88,
+      tokensPerSec: 46,
+      durationSec: 15600,
+      preferredPool: 'pool-east-01',
+    },
+    {
+      name: 'inf-glm4-9b-full',
+      model: 'GLM-4-9B-Chat',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 40,
+      tokensPerSec: 92,
+      durationSec: 9100,
+      preferredPool: 'pool-east-02',
+    },
+    {
+      name: 'inf-qwen2-vl-72b',
+      model: 'Qwen2-VL-72B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 118,
+      tokensPerSec: 34,
+      durationSec: 8700,
+      preferredPool: 'pool-east-01',
+    },
+    {
+      name: 'inf-internvl2-40b-full',
+      model: 'InternVL2-40B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 112,
+      tokensPerSec: 36,
+      durationSec: 9400,
+      preferredPool: 'pool-east-02',
+    },
+    {
+      name: 'inf-internvl2-26b',
+      model: 'InternVL2-26B',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 4,
+      latencyMs: 98,
+      tokensPerSec: 44,
+      durationSec: 7600,
+      preferredPool: 'pool-core-03',
+    },
+    {
+      name: 'inf-whisper-large-v3',
+      model: 'Whisper-Large-V3',
+      type: 'Inference',
+      projectId: 'proj-mm',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 180,
+      tokensPerSec: 0,
+      durationSec: 6200,
+      preferredPool: 'pool-core-03',
+    },
+    {
+      name: 'inf-bge-m3-embed',
+      model: 'BGE-M3',
+      type: 'Inference',
+      projectId: 'proj-agent',
+      strategy: 'tp',
+      gpuCount: 2,
+      latencyMs: 14,
+      tokensPerSec: 0,
+      durationSec: 16800,
+      preferredPool: 'pool-east-02',
+    },
+    {
+      name: 'train-qwen25-14b-sft',
       model: 'Qwen2.5-14B-SFT',
       type: 'Training',
       projectId: 'proj-llm',
@@ -799,12 +854,38 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       createdBy: 'chenli@fathompeak.cn',
     },
     {
-      name: 'ws-jupyter-mm-dev',
-      model: 'InternVL2-Dev',
+      name: 'train-llama70b-lora',
+      model: 'Llama-3-70B-LoRA',
+      type: 'Training',
+      projectId: 'proj-rd',
+      strategy: 'tp',
+      gpuCount: 8,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 14200,
+      preferredPool: 'pool-east-01',
+      createdBy: 'chenli@fathompeak.cn',
+    },
+    {
+      name: 'train-deepseek-v3-sft',
+      model: 'DeepSeek-V3-SFT',
+      type: 'Training',
+      projectId: 'proj-llm',
+      strategy: 'pp',
+      gpuCount: 32,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 22000,
+      preferredPool: 'pool-core-03',
+      createdBy: 'chenli@fathompeak.cn',
+    },
+    {
+      name: 'ws-llama31-8b-dev',
+      model: 'Llama-3.1-8B',
       type: 'Workspace',
-      projectId: 'proj-mm',
-      strategy: 'single',
-      gpuCount: 1,
+      projectId: 'proj-rd',
+      strategy: 'tp',
+      gpuCount: 2,
       latencyMs: 0,
       tokensPerSec: 0,
       durationSec: 5400,
@@ -812,40 +893,17 @@ export function seedInitialWorkloads(servers: ServerNode[]): Workload[] {
       createdBy: 'liwei@fathompeak.cn',
     },
     {
-      name: 'inf-whisper-asr',
-      model: 'Whisper-Large-V3',
-      type: 'Inference',
-      projectId: 'proj-mm',
-      strategy: 'single',
-      gpuCount: 1,
-      latencyMs: 210,
-      tokensPerSec: 0,
-      durationSec: 4100,
-      preferredPool: 'pool-core-03',
-    },
-    {
-      name: 'inf-internvl-mm',
-      model: 'InternVL2-40B',
-      type: 'Inference',
-      projectId: 'proj-mm',
+      name: 'ws-vscode-multigpu',
+      model: 'VSCode-MultiGPU',
+      type: 'Workspace',
+      projectId: 'proj-rd',
       strategy: 'tp',
       gpuCount: 4,
-      latencyMs: 124,
-      tokensPerSec: 31,
-      durationSec: 9800,
+      latencyMs: 0,
+      tokensPerSec: 0,
+      durationSec: 3600,
       preferredPool: 'pool-east-02',
-    },
-    {
-      name: 'inf-glm4-9b',
-      model: 'GLM-4-9B',
-      type: 'Inference',
-      projectId: 'proj-agent',
-      strategy: 'single',
-      gpuCount: 1,
-      latencyMs: 41,
-      tokensPerSec: 78,
-      durationSec: 6400,
-      preferredPool: 'pool-east-02',
+      createdBy: 'liwei@fathompeak.cn',
     },
   ]
 
@@ -934,9 +992,9 @@ export function createInitialState(): AppState {
       id: 'aud-005',
       ts: Date.now() - 1500_000,
       actor: 'scheduler',
-      action: 'NVLink 亲和调度',
+      action: '卡间互联亲和调度',
       target: 'inf-llama3-70b-tp4',
-      detail: '同一机箱 GPU0-3 NVLink 直连拓扑匹配成功',
+      detail: '同一机箱同型号 GPU0-3 卡间互联拓扑匹配成功',
       level: 'info',
     },
     {
@@ -966,7 +1024,13 @@ export function createInitialState(): AppState {
     pools: POOLS,
     servers,
     workloads,
-    projects: PROJECTS.map((p) => ({ ...p })),
+    projects: PROJECTS.map((p) => ({
+      ...p,
+      used: Math.min(
+        p.overQuota,
+        workloads.filter((w) => w.projectId === p.id).reduce((n, w) => n + w.gpuCount, 0),
+      ),
+    })),
     policies: POLICIES.map((p) => ({ ...p })),
     audits,
     stations: STATIONS.map((s) => ({ ...s })),
@@ -1003,8 +1067,8 @@ export function spawnWorkload(
   const type = custom?.type ?? 'Inference'
   const presets = {
     single: {
-      name: custom?.name ?? `${type === 'Workspace' ? 'ws' : type === 'Training' ? 'train' : 'inf'}-qwen7b-${wlSeq}`,
-      model: custom?.model ?? 'Qwen-7B-Chat',
+      name: custom?.name ?? `${type === 'Workspace' ? 'ws' : type === 'Training' ? 'train' : 'inf'}-qwen25-7b-${wlSeq}`,
+      model: custom?.model ?? 'Qwen2.5-7B',
       strategy: 'single' as ScheduleStrategy,
       gpuCount: custom?.gpuCount ?? 1,
       projectId: custom?.projectId ?? 'proj-agent',
@@ -1014,19 +1078,19 @@ export function spawnWorkload(
     tp4: {
       name:
         custom?.name ??
-        `${type === 'Training' ? 'train' : 'inf'}-${(custom?.model ?? 'MiniMax-H3').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-tp-${wlSeq}`,
-      model: custom?.model ?? 'MiniMax-H3',
+        `${type === 'Training' ? 'train' : 'inf'}-${(custom?.model ?? 'Qwen2.5-72B').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-tp-${wlSeq}`,
+      model: custom?.model ?? 'Qwen2.5-72B',
       strategy: 'tp' as ScheduleStrategy,
-      gpuCount: custom?.gpuCount ?? 4,
+      gpuCount: custom?.gpuCount ?? 8,
       projectId: custom?.projectId ?? 'proj-llm',
       latencyMs: type === 'Inference' ? 88 + Math.round(Math.random() * 24) : 0,
       tokensPerSec: type === 'Inference' ? 38 + Math.round(Math.random() * 12) : 0,
     },
     gang: {
-      name: custom?.name ?? `inf-deepseek-v4-gang-${wlSeq}`,
-      model: custom?.model ?? 'DeepSeek-V4',
+      name: custom?.name ?? `inf-deepseek-v3-gang-${wlSeq}`,
+      model: custom?.model ?? 'DeepSeek-V3-671B',
       strategy: 'pp' as ScheduleStrategy,
-      gpuCount: custom?.gpuCount ?? 16,
+      gpuCount: custom?.gpuCount ?? 32,
       projectId: custom?.projectId ?? 'proj-llm',
       latencyMs: 170 + Math.round(Math.random() * 40),
       tokensPerSec: 24 + Math.round(Math.random() * 10),
@@ -1071,7 +1135,7 @@ export function spawnWorkload(
       id: `aud-${Date.now() + 1}`,
       ts: Date.now() + 1,
       actor: 'scheduler',
-      action: kind === 'single' ? 'Binpack 装箱' : kind === 'tp4' ? 'NVLink 亲和调度' : 'Gang 调度锁定',
+      action: kind === 'single' ? 'Binpack 装箱' : kind === 'tp4' ? '同型号互联亲和调度' : 'Gang 调度锁定',
       target: workload.name,
       detail: allocations.map((a) => `${a.hostname}[${a.gpuIndices.join(',')}]`).join(' · '),
       level: 'info',

@@ -455,7 +455,8 @@ export function ClusterStatsPanel() {
             <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0 text-infer" />
             <span>
               当前电站关联 {stats.pool?.name ?? '—'}，全国合计 {state.pools.length} 个节点池 /{' '}
-              {state.servers.length} 台机 / {state.servers.length * 8} 卡。
+              {state.servers.length} 台机 /{' '}
+              {state.servers.reduce((n, s) => n + s.gpus.length, 0)} 卡。
             </span>
           </div>
         </section>

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { ServerNode, Workload } from '../../types'
+import { estimateGpuPowerW, specForModel } from '../monitor/gpuSpecs'
 import { clamp, displayHostname, wave } from './format'
 
 interface Row {
@@ -39,17 +40,19 @@ export function WorstFirstTable({
     servers.forEach((server, serverIndex) => {
       server.gpus.forEach((gpu) => {
         const wobble = wave(serverIndex * 8 + gpu.index, Math.floor(tick / 2000))
+        const spec = specForModel(gpu.cardModel || server.gpuModel)
         const fault = gpu.state === 'fault'
         const idle = gpu.state === 'idle' || fault
         const sm = fault ? 0 : clamp(gpu.utilization + wobble * 1.6, idle ? 0 : 8, 99)
-        const memUsed = fault ? 0 : clamp(gpu.memoryUsedGb + wobble * 0.35, 0.2, 79.8)
+        const memUsed = fault
+          ? 0
+          : clamp(gpu.memoryUsedGb + wobble * 0.35, 0.2, Math.max(0.4, gpu.memoryTotalGb - 0.2))
         const temp = fault ? clamp(gpu.temperature, 40, 96) : clamp(gpu.temperature + wobble * 0.7, 32, 94)
         const power = fault
           ? 0
-          : idle
-            ? Math.round(clamp(82 + wobble * 8, 55, 130))
-            : Math.round(clamp(390 + sm * 2.8 + wobble * 16, 280, 700))
-        const throttle = fault ? 'Board Offline' : temp >= 83 ? 'HW Slowdown' : power >= 690 ? 'SW Power Cap' : 'None'
+          : estimateGpuPowerW(spec, idle ? 2 + Math.abs(wobble) : sm, wobble * 4)
+        const throttle =
+          fault ? 'Board Offline' : temp >= 83 ? 'HW Slowdown' : power >= spec.tdpW * 0.98 ? 'SW Power Cap' : 'None'
         const pState = fault || idle ? 'P8' : sm >= 45 ? 'P0' : 'P2'
         list.push({
           key: `${server.id}-${gpu.index}`,

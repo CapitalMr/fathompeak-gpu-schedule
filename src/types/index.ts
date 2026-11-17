@@ -54,7 +54,7 @@ export interface ServerNode {
   poolId: string
   rackRow: number
   rackCol: number
-  /** 机箱卡型摘要（同卡或混卡），如「RTX 5090×4 + RTX 4060×4」 */
+  /** 机箱卡型摘要（同卡或混卡），如「H100×4 + H200×4」 */
   gpuModel: string
   gpus: GpuSlot[]
   /** 节点健康状态（字段名历史兼容；展示层用「状态」） */

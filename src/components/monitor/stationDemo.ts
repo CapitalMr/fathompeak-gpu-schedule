@@ -43,7 +43,6 @@ const A100SXM = 'NVIDIA A100-SXM4-80GB'
 const A100PCIE = 'NVIDIA A100-PCIe-80GB'
 const V100 = 'NVIDIA V100-SXM2-32GB'
 const RTX5090 = 'NVIDIA GeForce RTX 5090 32GB'
-const RTX4060 = 'NVIDIA GeForce RTX 4060 8GB'
 const ASCEND_B = '华为昇腾 Ascend 910B 64GB'
 const ASCEND_C = '华为昇腾 Ascend 910C 64GB'
 const MLU590 = '寒武纪思元 MLU590 48GB'
@@ -57,7 +56,6 @@ const COLORS = {
   a100pcie: { requestColor: '#0284C7', fillFrom: 'rgba(2,132,199,0.45)', fillTo: 'rgba(2,132,199,0.08)' },
   v100: { requestColor: '#0E7490', fillFrom: 'rgba(14,116,144,0.45)', fillTo: 'rgba(14,116,144,0.08)' },
   rtx5090: { requestColor: '#7C3AED', fillFrom: 'rgba(124,58,237,0.45)', fillTo: 'rgba(124,58,237,0.08)' },
-  rtx4060: { requestColor: '#8B5CF6', fillFrom: 'rgba(139,92,246,0.42)', fillTo: 'rgba(139,92,246,0.08)' },
   ascend910b: { requestColor: '#BE123C', fillFrom: 'rgba(190,18,60,0.48)', fillTo: 'rgba(190,18,60,0.08)' },
   ascend910c: { requestColor: '#E11D48', fillFrom: 'rgba(225,29,72,0.45)', fillTo: 'rgba(225,29,72,0.08)' },
   mlu590: { requestColor: '#0F766E', fillFrom: 'rgba(15,118,110,0.48)', fillTo: 'rgba(15,118,110,0.08)' },
@@ -89,8 +87,7 @@ const PROFILES: Record<string, StationDemoProfile> = {
     skus: [
       sku('h100', H100, 48, 42, 30, 46, 36, 'h100'),
       sku('h200', H200, 24, 20, 14, 22, 16, 'h200'),
-      sku('rtx5090', RTX5090, 32, 28, 20, 30, 24, 'rtx5090'),
-      sku('rtx4060', RTX4060, 32, 24, 14, 28, 18, 'rtx4060'),
+      sku('rtx5090', RTX5090, 48, 40, 28, 44, 34, 'rtx5090'),
       sku('ascend910b', ASCEND_B, 40, 34, 24, 38, 28, 'ascend910b'),
       sku('mlu590', MLU590, 24, 18, 12, 20, 14, 'mlu590'),
     ],
@@ -168,8 +165,7 @@ const PROFILES: Record<string, StationDemoProfile> = {
     mood: 'warm',
     gauges: { temp: 62.4, power: 36.8, totalUtil: 44.6, usedUtil: 72.8 },
     skus: [
-      sku('rtx5090', RTX5090, 40, 28, 16, 34, 22, 'rtx5090'),
-      sku('rtx4060', RTX4060, 40, 24, 12, 30, 18, 'rtx4060'),
+      sku('rtx5090', RTX5090, 56, 38, 24, 48, 32, 'rtx5090'),
       sku('v100', V100, 32, 18, 10, 24, 14, 'v100'),
       sku('a100pcie', A100PCIE, 24, 14, 8, 18, 12, 'a100pcie'),
       sku('h100', H100, 24, 14, 8, 18, 12, 'h100'),

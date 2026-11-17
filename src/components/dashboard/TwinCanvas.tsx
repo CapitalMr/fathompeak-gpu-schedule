@@ -362,8 +362,9 @@ export function TwinCanvas() {
     if (scale > 0.75) {
       const localY = y - (hit.sy - 8)
       const gi = Math.floor((localY - 36) / 28)
-      if (gi >= 0 && gi < 8) {
+      if (gi >= 0 && gi < server.gpus.length) {
         const gpu = server.gpus[gi]
+        if (!gpu) return
         setHover({
           x: sx + 14,
           y: sy + 14,
@@ -397,7 +398,7 @@ export function TwinCanvas() {
         title: server.hostname,
         lines: [
           server.ip,
-          `状态 ${dom} · 占用 ${server.gpus.filter((g) => g.state !== 'idle').length}/8`,
+          `状态 ${dom} · 占用 ${server.gpus.filter((g) => g.state !== 'idle').length}/${server.gpus.length}`,
           `温度 ${server.temperature}°C · RDMA ${server.rdmaGbps}Gbps`,
         ],
       })
@@ -609,10 +610,13 @@ function drawServerCapsule(
   ctx.strokeStyle = COLORS.border
   ctx.stroke()
 
-  for (let i = 0; i < 8; i++) {
+  const iconSlots = Math.min(8, server.gpus.length)
+  for (let i = 0; i < iconSlots; i++) {
+    const gpu = server.gpus[i]
+    if (!gpu) continue
     const gx = x + 2 + (i % 4) * 8
     const gy = y + 3 + Math.floor(i / 4) * 9
-    ctx.fillStyle = gpuColor(server.gpus[i].state)
+    ctx.fillStyle = gpuColor(gpu.state)
     roundRect(ctx, gx, gy, 7, 7, 1.5)
     ctx.fill()
   }
@@ -637,9 +641,14 @@ function drawChassis(
   ctx.save()
   ctx.globalAlpha = alpha
 
+  const slotN = server.gpus.length
+  const showN = Math.min(slotN, 8)
+  const slotH = showN <= 4 ? 28 : 24
+  const bodyH = 50 + showN * slotH + 28
+
   // chassis body 2.5D
   ctx.fillStyle = '#ffffff'
-  roundRect(ctx, x, y, 150, 268, 8)
+  roundRect(ctx, x, y, 150, bodyH, 8)
   ctx.fill()
   ctx.strokeStyle = 'rgba(61,49,79,0.22)'
   ctx.lineWidth = 1.5
@@ -660,13 +669,14 @@ function drawChassis(
   ctx.fillText(server.hostname, x + 10, y + 26)
   ctx.fillStyle = COLORS.dim
   ctx.font = '9px monospace'
-  ctx.fillText(server.ip, x + 10, y + 40)
+  ctx.fillText(`${server.ip} · ${slotN}槽`, x + 10, y + 40)
 
-  // GPU slots
-  for (let i = 0; i < 8; i++) {
+  // GPU slots（透视最多展示 8 槽，余量在标题体现）
+  for (let i = 0; i < showN; i++) {
     const gpu = server.gpus[i]
-    const gy = y + 50 + i * 24
-    roundRect(ctx, x + 10, gy, 130, 20, 4)
+    if (!gpu) continue
+    const gy = y + 50 + i * slotH
+    roundRect(ctx, x + 10, gy, 130, slotH - 4, 4)
     ctx.fillStyle = '#f8f8f8'
     ctx.fill()
     ctx.strokeStyle = gpuColor(gpu.state)
@@ -679,10 +689,10 @@ function drawChassis(
 
     ctx.fillStyle = COLORS.muted
     ctx.font = '9px sans-serif'
-    ctx.fillText(`GPU ${i}`, x + 24, gy + 13)
+    const short = gpu.cardModel.replace(/^NVIDIA (GeForce )?/, '').replace(/^华为昇腾 /, '').replace(/^寒武纪思元 /, '')
+    ctx.fillText(`GPU${i} ${short.slice(0, 14)}`, x + 24, gy + 13)
 
-    // memory bar
-    const memRatio = gpu.memoryUsedGb / gpu.memoryTotalGb
+    const memRatio = gpu.memoryUsedGb / Math.max(1, gpu.memoryTotalGb)
     ctx.fillStyle = 'rgba(61,49,79,0.08)'
     roundRect(ctx, x + 62, gy + 6, 70, 8, 2)
     ctx.fill()
@@ -693,7 +703,7 @@ function drawChassis(
     if (selectedWorkloadId && gpu.workloadId === selectedWorkloadId) {
       ctx.strokeStyle = '#2f63b8'
       ctx.globalAlpha = 0.35 + Math.sin(t * 6) * 0.2
-      roundRect(ctx, x + 10, gy, 130, 20, 4)
+      roundRect(ctx, x + 10, gy, 130, slotH - 4, 4)
       ctx.stroke()
       ctx.globalAlpha = alpha
     }
@@ -713,9 +723,17 @@ function drawChassis(
     ctx.stroke()
   }
 
-  // NVLink bus
+  // 卡间互联总线（按机箱实际 fabric，非一律 NVLink）
   const multiOrGang = server.gpus.some((g) => g.state === 'multi' || g.state === 'gang')
-  const busY = y + 248
+  const fabric =
+    /昇腾|910/.test(server.gpuModel)
+      ? 'HCCS'
+      : /思元|MLU/.test(server.gpuModel)
+        ? 'MLU-Link'
+        : /5090|4060|PCIe/.test(server.gpuModel)
+          ? 'PCIe'
+          : 'NVLink'
+  const busY = y + bodyH - 18
   roundRect(ctx, x + 10, busY, 130, 12, 3)
   ctx.fillStyle = multiOrGang ? 'rgba(138,98,50,0.12)' : '#f8f8f8'
   ctx.fill()
@@ -723,7 +741,7 @@ function drawChassis(
   ctx.stroke()
   ctx.fillStyle = multiOrGang ? COLORS.gang : COLORS.dim
   ctx.font = '8px sans-serif'
-  ctx.fillText('NVLink 高速互联总线', x + 28, busY + 9)
+  ctx.fillText(`${fabric} 卡间互联${slotN > 8 ? ` · 共${slotN}槽` : ''}`, x + 22, busY + 9)
 
   if (multiOrGang) {
     for (let i = 0; i < 5; i++) {
