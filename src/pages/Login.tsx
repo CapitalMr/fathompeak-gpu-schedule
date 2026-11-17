@@ -1,16 +1,29 @@
 import { useState } from 'react'
 import { useApp } from '../store/AppContext'
 
+const VALID_USERNAME = 'wangxiaoliang@fathompeak.cn'
+const VALID_PASSWORD = '12345678'
+
 export function Login() {
-  const { login, state } = useApp()
+  const { login } = useApp()
   const [loading, setLoading] = useState(false)
-  const [username] = useState(state.user)
-  const [password] = useState('••••••••••••')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
 
   const handleLogin = async () => {
     if (loading) return
+    setError('')
+    if (username.trim() !== VALID_USERNAME || password !== VALID_PASSWORD) {
+      setError('账号或密码错误')
+      return
+    }
     setLoading(true)
-    await login()
+    try {
+      await login()
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -41,24 +54,31 @@ export function Login() {
             <label className="grid gap-1.5 text-[13px] text-dim">
               用户名
               <input
-                readOnly
                 name="username"
                 autoComplete="username"
                 value={username}
-                className="h-11 rounded-xl border border-border bg-white px-3.5 font-mono text-sm text-text outline-none"
+                onChange={(e) => {
+                  setUsername(e.target.value)
+                  if (error) setError('')
+                }}
+                className="h-11 rounded-xl border border-border bg-white px-3.5 font-mono text-sm text-text outline-none focus:border-infer"
               />
             </label>
             <label className="grid gap-1.5 text-[13px] text-dim">
               密码
               <input
-                readOnly
                 name="password"
                 type="password"
                 autoComplete="current-password"
                 value={password}
-                className="h-11 rounded-xl border border-border bg-white px-3.5 font-mono text-sm text-text outline-none"
+                onChange={(e) => {
+                  setPassword(e.target.value)
+                  if (error) setError('')
+                }}
+                className="h-11 rounded-xl border border-border bg-white px-3.5 font-mono text-sm text-text outline-none focus:border-infer"
               />
             </label>
+            {error ? <p className="text-[13px] text-red-600">{error}</p> : null}
             <button
               type="submit"
               disabled={loading}
